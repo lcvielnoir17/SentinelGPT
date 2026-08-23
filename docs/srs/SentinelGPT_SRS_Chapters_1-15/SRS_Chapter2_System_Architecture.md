@@ -1,9 +1,17 @@
 # Software Requirements Specification
+
+### Research-alignment invariant
+
+The architecture treats SentinelGPT as a **vulnerability-intelligence and analysis pipeline**, not an autonomous penetration-testing agent. The canonical flow is:
+
+`authorized scan → raw evidence → normalized observations → candidate findings → deterministic correlation/deduplication → contextual enrichment → evidence-grounded AI interpretation → deterministic validation → human verification → prioritized reporting`
+
+Scanners remain the source of detection evidence. The normalization layer first creates lossless **observations** from tool output; only subsequent deterministic logic promotes observations into canonical findings and relationships. The AI layer interprets supplied evidence and must not originate findings, silently merge findings, assign canonical severity, or initiate exploitation. This separation is required for reproducibility and for the research evaluation described in Chapter 1.
 ## AI-Assisted Vulnerability Assessment Platform
 
 **Document Type:** Software Requirements Specification (SRS)
 **Chapter:** 2 — System Architecture
-**Version:** 1.0 (Draft)
+**Version:** 2.0 (Revised Draft)
 **Status:** For Review
 **Prerequisite:** Chapter 1 — Foundations & Requirements Overview
 
@@ -123,28 +131,28 @@ backend/
 ├── src/
 │   ├── api/                        # HTTP layer — routing, controllers, request validation
 │   │   ├── routes/
-│   │   │   ├── auth.routes.ts
-│   │   │   ├── scans.routes.ts
-│   │   │   ├── targets.routes.ts
-│   │   │   ├── reports.routes.ts
-│   │   │   └── dashboard.routes.ts
+│   │   │   ├── auth_routes.py
+│   │   │   ├── scans_routes.py
+│   │   │   ├── targets_routes.py
+│   │   │   ├── reports_routes.py
+│   │   │   └── dashboard_routes.py
 │   │   ├── controllers/
 │   │   ├── middlewares/
-│   │   │   ├── authMiddleware.ts
-│   │   │   ├── rateLimitMiddleware.ts
-│   │   │   ├── authorizationAttestationGuard.ts   # blocks scans lacking attestation
-│   │   │   └── errorHandler.ts
+│   │   │   ├── auth_middleware.py
+│   │   │   ├── rate_limit_middleware.py
+│   │   │   ├── authorization_attestation_guard.py   # blocks scans lacking attestation
+│   │   │   └── error_handler.py
 │   │   └── validators/                             # request schema validation
 │   │
 │   ├── domain/                      # Core business logic, framework-agnostic
 │   │   ├── users/
 │   │   ├── organizations/
 │   │   ├── targets/
-│   │   │   └── authorizationAttestation.service.ts
+│   │   │   └── authorization_attestation_service.py
 │   │   ├── scans/
-│   │   │   ├── scan.entity.ts
-│   │   │   ├── scan.service.ts
-│   │   │   └── scanLifecycle.stateMachine.ts
+│   │   │   ├── scan_entity.py
+│   │   │   ├── scan_service.py
+│   │   │   └── scan_lifecycle_state_machine.py
 │   │   ├── findings/
 │   │   └── reports/
 │   │
@@ -157,43 +165,43 @@ backend/
 │   │   │   ├── whois/
 │   │   │   └── vulnerability/
 │   │   ├── sandbox/                 # sandbox provisioning/teardown logic
-│   │   ├── engineRegistry.ts        # pluggable engine registration (T1)
-│   │   └── scanOrchestrator.ts
+│   │   ├── engine_registry.py        # pluggable engine registration (T1)
+│   │   └── scan_orchestrator.py
 │   │
 │   ├── ai/                          # AI orchestration layer
-│   │   ├── promptBuilders/
-│   │   │   ├── findingExplanation.prompt.ts
-│   │   │   ├── remediationGuidance.prompt.ts
-│   │   │   └── executiveSummary.prompt.ts
-│   │   ├── responseValidators/      # schema + evidence-grounding validation
-│   │   ├── llmClient.ts
-│   │   └── aiOrchestrator.service.ts
+│   │   ├── prompt_builders/
+│   │   │   ├── finding_explanation_prompt.py
+│   │   │   ├── remediation_guidance_prompt.py
+│   │   │   └── executive_summary_prompt.py
+│   │   ├── response_validators/      # schema + evidence-grounding validation
+│   │   ├── llm_client.py
+│   │   └── ai_orchestrator_service.py
 │   │
 │   ├── reporting/                   # PDF/export generation
 │   │   ├── pdfGenerator/
 │   │   ├── exportFormatters/        # JSON/CSV formatters
-│   │   └── reportBuilder.service.ts
+│   │   └── report_builder_service.py
 │   │
 │   ├── infrastructure/               # Cross-cutting technical concerns
 │   │   ├── database/
 │   │   │   ├── migrations/
 │   │   │   ├── repositories/
-│   │   │   └── connection.ts
+│   │   │   └── connection.py
 │   │   ├── queue/
 │   │   ├── cache/
 │   │   ├── storage/                  # object storage client
 │   │   ├── secrets/                  # secrets manager integration
 │   │   └── logging/
-│   │       ├── logger.ts
-│   │       └── auditLogger.ts
+│   │       ├── logger.py
+│   │       └── audit_logger.py
 │   │
 │   ├── workers/                     # Queue consumers (scan workers)
-│   │   ├── scanWorker.ts
-│   │   └── reportWorker.ts
+│   │   ├── scan_worker.py
+│   │   └── report_worker.py
 │   │
 │   └── config/
-│       ├── env.ts
-│       └── constants.ts
+│       ├── env.py
+│       └── constants.py
 │
 ├── tests/
 │   ├── unit/
@@ -203,7 +211,7 @@ backend/
 ├── scripts/                         # deployment/maintenance scripts
 ├── Dockerfile
 ├── docker-compose.yml
-└── package.json
+└── pyproject.toml
 ```
 
 ---
@@ -258,8 +266,8 @@ frontend/
 │   │   └── types/
 │   │
 │   ├── services/
-│   │   ├── apiClient.ts             # centralized HTTP client, auth header injection
-│   │   └── websocketClient.ts       # real-time scan progress updates
+│   │   ├── api_client.py             # centralized HTTP client, auth header injection
+│   │   └── websocket_client.py       # real-time scan progress updates
 │   │
 │   ├── state/                       # global state management (store)
 │   │
@@ -267,7 +275,7 @@ frontend/
 │
 ├── public/
 ├── tests/
-└── package.json
+└── pyproject.toml
 ```
 
 ---
@@ -285,7 +293,7 @@ Every scan engine implements a common contract:
 - **`normalizeOutput(rawResult)`** — converts tool-specific output into the Platform's canonical `Finding` schema
 - **`riskWeight`** — contributes to aggregate severity scoring
 
-This contract means new scan engines (e.g., a future cloud-config checker) can be added without modifying the orchestrator itself — only registered into `engineRegistry.ts`.
+This contract means new scan engines (e.g., a future cloud-config checker) can be added without modifying the orchestrator itself — only registered into `engine_registry.py`.
 
 ### 5.2 Scan Orchestration Flow
 
@@ -417,6 +425,25 @@ flowchart LR
 
 ---
 
+
+### 8.1 Canonical evidence pipeline invariant
+
+The system distinguishes **raw evidence**, **observations**, and **findings**:
+
+1. **Raw evidence** is the original scanner output and artifacts retained for provenance.
+2. **Observation** is a normalized statement of what a tool actually observed (for example, an open port, an HTTP 200 response for `/admin`, or a Nuclei template match). An observation is not automatically a verified vulnerability.
+3. **Candidate finding** is a normalized security issue assembled from one or more observations.
+4. **Correlated finding/relationship** is produced only after candidate findings are compared using deterministic rules and, where appropriate, constrained AI classification.
+5. **Verified finding** records whether automated checks or a human reviewer confirmed the interpretation.
+
+This separation prevents a scanner alert, semantic similarity, or LLM output from being treated as proof by default. Every transition remains traceable to its source evidence.
+
+### 8.2 Research baseline and ground-truth boundary
+
+The architecture supports three evaluation conditions: **single-tool output**, **multi-tool rule-based aggregation**, and **SentinelGPT-assisted analysis**. Experimental evaluation must use controlled or seeded test cases with known expected findings and relationships so that correlation precision/recall, incorrect merges, missed duplicates, prioritization agreement, grounding errors, and analyst time can be measured independently of the model's own claims.
+
+---
+
 ## 9. Authentication Flow
 
 > **This section is the single source of truth for token handling.** One architecture, stated once, precisely — Chapters 5, 7, and 11 all implement this exact flow; none of them introduce a different pattern.
@@ -442,23 +469,22 @@ sequenceDiagram
     end
     AUTH->>AUTH: Issue short-lived access JWT + rotating refresh token
     AUTH->>DB: Persist refresh token record (revocable, hashed)
-    AUTH-->>API: access token (body) + refresh token (cookie)
-    API-->>SPA: 200 { accessToken } + Set-Cookie: refreshToken (HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth)
-    SPA->>SPA: Hold accessToken in memory only (never localStorage)
-    SPA->>API: Subsequent requests: Authorization: Bearer accessToken
+    AUTH-->>API: access + refresh tokens (HttpOnly cookies)
+    API-->>SPA: 200 + Set-Cookie: accessToken; refreshToken (HttpOnly; Secure; SameSite=Strict)
+    SPA->>API: Subsequent requests: browser automatically attaches HttpOnly access cookie
     API->>AUTH: Verify JWT signature/expiry on each request
-    Note over SPA,API: On 401 (expired access token): SPA calls POST /auth/refresh.<br/>Browser auto-attaches the HttpOnly refresh cookie; no JS ever reads it.
+    Note over SPA,API: On 401 (expired access cookie): SPA calls POST /auth/refresh.<br/>Browser auto-attaches the HttpOnly refresh cookie; no JS ever reads either token.
     SPA->>API: POST /auth/refresh (X-Refresh-Request: 1)
     API->>AUTH: Validate refresh cookie + rotate
     AUTH->>DB: Revoke old refresh token, issue new one
-    AUTH-->>API: new access token (body) + new refresh token (cookie)
-    API-->>SPA: 200 { accessToken } + Set-Cookie: refreshToken (rotated)
+    AUTH-->>API: new access + refresh tokens (cookies)
+    API-->>SPA: 200 + Set-Cookie: accessToken + refreshToken (rotated)
 ```
 
 **The one architecture, stated precisely:**
 
-- **Access token** — a short-lived JWT (~15 min), returned **in the response body only**, held **in memory** on the frontend (a React context variable, never `localStorage`, never a cookie). It is lost on a full page reload by design — the app silently calls `/auth/refresh` on load to get a new one, using the refresh cookie the browser already holds. Sent on every API request as `Authorization: Bearer <token>`.
-- **Refresh token** — longer-lived, delivered **exclusively as an HttpOnly, Secure, SameSite=Strict cookie**, scoped to `Path=/api/v1/auth` so it's never even sent to unrelated endpoints. No JavaScript on the frontend ever reads, stores, or transmits it — the browser does that automatically, and only to the refresh/logout endpoints.
+- **Access token** — a short-lived (~15 min) signed JWT delivered only as an `HttpOnly`, `Secure`, `SameSite=Strict` cookie. JavaScript never reads or stores it, and API requests do not manually inject an `Authorization` header.
+- **Refresh token** — longer-lived, delivered as a separate `HttpOnly`, `Secure`, `SameSite=Strict` cookie scoped to the auth routes. JavaScript never reads, stores, or transmits it.
 - **Rotation & revocation**: every successful `/auth/refresh` call issues a brand-new refresh token and immediately invalidates the old one server-side (Chapter 4's `authorization_attestation`-style pattern — a real DB record, not a purely stateless token). Reuse of an already-rotated refresh token is treated as a signal of possible theft and revokes the entire token family, forcing re-login.
 - **CSRF strategy for the cookie-authenticated refresh endpoint**: `SameSite=Strict` is the primary defense (modern browsers won't attach the cookie to any cross-site request at all). As cheap defense-in-depth, `/auth/refresh` and `/auth/logout` additionally require a custom header (`X-Refresh-Request: 1`) that only same-origin JavaScript can set — a plain cross-site form POST can't add custom headers, so this closes the gap for older-browser edge cases without standing up a full stateful CSRF-token system. This is judged sufficient for the MVP; a double-submit CSRF token is a documented future hardening if the threat model ever changes (e.g., if a public API consumer is added).
 - **Brute-force protection**: progressive login delay / temporary lockout after repeated failed attempts, tied into the rate-limiting middleware.

@@ -1,8 +1,12 @@
 # Software Requirements Specification
 ## AI-Assisted Vulnerability Assessment Platform
 
+### Security invariant
+No authorization, authentication, scanner, correlation, or AI component may bypass the established trust boundaries. In particular, access and refresh tokens follow one documented pattern: both are short-lived/rotating JWT credentials delivered only through secure HttpOnly cookies and tracked server-side where revocation is required; JavaScript never reads or stores either token.
+
+
 **Chapter 11 — Security**
-**Version:** 1.0 (Draft) | **Status:** For Review
+**Version:** 2.0 (Revised Draft) | **Status:** For Review
 **Prerequisite:** Chapters 1–10
 
 > This platform performs security scanning for a living — its own security posture is not a supporting concern, it is the product's credibility. This chapter consolidates the controls scattered through Chapters 2–10 into a single threat model and adds the governance layer (SDLC practices, incident response, disclosure policy) not covered elsewhere.
@@ -119,8 +123,8 @@ Scan findings are treated as **sensitive by default**, not merely "the user's ow
 
 Extending Chapter 2, Section 9 — this is not an alternative description, it is the same architecture restated with security rationale. **There is exactly one token-storage pattern in this system, used everywhere:**
 - Passwords hashed with Argon2id (preferred) or bcrypt with a modern cost factor; no reversible encryption of passwords under any circumstance.
-- **Access token**: short-lived (~15 min) signed JWT, returned in the response body, held in memory on the frontend only — never a cookie, never `localStorage` (Chapter 2, Section 9; Chapter 7, Section 3). Sent via `Authorization: Bearer`.
-- **Refresh token**: longer-lived, stored server-side as revocable (a real, queryable record — not purely stateless), rotated on every use, delivered **exclusively** as an `HttpOnly`, `Secure`, `SameSite=Strict` cookie scoped to the auth routes. Refresh-token reuse (a rotated-out token presented again) revokes the whole token family and forces re-login — the concrete detection mechanism for token theft.
+- **Access token**: short-lived (~15 min) signed JWT delivered only as an `HttpOnly`, `Secure`, `SameSite=Strict` cookie. JavaScript never reads or stores it, and API requests do not manually inject an `Authorization` header.
+- **Refresh token**: longer-lived, stored server-side as revocable, rotated on every use, and delivered as a separate `HttpOnly`, `Secure`, `SameSite=Strict` cookie scoped to the auth routes. Refresh-token reuse (a rotated-out token presented again) revokes the whole token family and forces re-login — the concrete detection mechanism for token theft.
 - **CSRF mitigation for the refresh/logout endpoints** (the only endpoints a cookie alone authenticates): `SameSite=Strict` is the primary defense; a required `X-Refresh-Request: 1` header — which a cross-site form POST cannot set — is a lightweight secondary layer. A full double-submit CSRF-token scheme is documented as a future hardening, not required for the MVP's threat model (Chapter 2, Section 9).
 - Account lockout: progressive delay after repeated failed logins, full temporary lockout after a threshold, with lockout events written to the audit log.
 - MFA strongly encouraged (and eventually required) for `ADMIN` organization roles given their elevated blast radius (member management, org-wide target/attestation visibility).

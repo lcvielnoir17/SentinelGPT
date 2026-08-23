@@ -3,7 +3,7 @@
 
 **Document Type:** Software Requirements Specification (SRS)
 **Chapter:** 4 — Database Design (ERD + Schema)
-**Version:** 1.0 (Draft)
+**Version:** 2.0 (Revised Draft)
 **Status:** For Review
 **Prerequisite:** Chapter 1 (Foundations), Chapter 2 (System Architecture), Chapter 3 (Technology Stack & Coding Standards)
 
@@ -242,6 +242,25 @@ This table is what makes the schema lifecycle-driven rather than feature-driven:
 
 A "finding" in this platform is not just a row produced by one scan — it is a **recurring identity** that must be recognizable across multiple scans of the same target so that trend/history features (Chapter 1, US-13, US-14; FR-17) work without redesign.
 
+
+### 6.0A `scanner_observation` (normalized observation layer)
+The observation layer preserves what a scanner actually reported before the system treats it as a candidate vulnerability finding. This avoids conflating reconnaissance/exposure observations with verified vulnerabilities.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | uuid PK | |
+| `scan_engine_execution_id` | uuid FK → scan_engine_execution.id | not null |
+| `scan_id` | uuid FK → scan.id | not null |
+| `asset_identity` | varchar(500) | not null |
+| `location_json` | jsonb | nullable | URL/path/port/protocol information as applicable |
+| `observation_type` | varchar(80) | not null | e.g. `OPEN_PORT`, `WEB_PATH`, `TEMPLATE_MATCH`, `TECHNOLOGY_VERSION` |
+| `normalized_data` | jsonb | not null | lossless normalized representation |
+| `raw_reference` | varchar(500) | not null | pointer into raw output/artifact storage |
+| `confidence` | numeric(5,4) | nullable | confidence in the observation, not vulnerability severity |
+| `observed_at` | timestamptz | not null | |
+
+**Invariant:** observations are immutable evidence records. Promotion to a `finding` does not delete or overwrite the originating observation.
+
 ### 6.1 `finding`
 | Column | Type | Constraints |
 |---|---|---|
@@ -447,8 +466,12 @@ Lookup table (Section 3 pattern) — the vocabulary of how two findings can rela
 | Column | Type | Notes |
 |---|---|---|
 | `id` | int PK | |
-| `code` | varchar(30) unique | `DUPLICATE` — two engines independently reporting the same underlying issue (Chapter 8, Section 5's cross-engine dedup writes this type). `RELATED` — a looser association a correlation rule flagged that doesn't rise to forming a full risk cluster; reserved for future rule types, not produced by any MVP rule. `CORRELATED` — this finding is a member of a `risk_cluster` (Chapter 8, Section 11's rules all produce this type). |
+| `code` | varchar(30) unique | `DUPLICATE` — two engines independently reporting the same underlying issue (Chapter 8, Section 5's cross-engine dedup writes this type). `CORROBORATES` — independent evidence supports the same underlying finding without requiring the observations to be identical. `RELATED` — a looser association a correlation rule flagged that doesn't rise to forming a full risk cluster; reserved for future rule types, not produced by any MVP rule. `CORRELATED` — this finding is a member of a `risk_cluster` (Chapter 8, Section 11's rules all produce this type). |
 | `label` | varchar(100) | Human-readable |
+
+### 15.1A Canonical relationship-model invariant
+
+`finding_relationship` is the **single canonical persistence mechanism for relationships between findings**. Cross-engine duplicates, deterministic correlations, and future relationship types must not be represented through ad-hoc evidence metadata or parallel relationship tables. `finding_evidence` stores evidence; `finding_relationship` stores relationships. This distinction prevents competing sources of truth and keeps correlation results auditable.
 
 ### 15.2 `correlation_rule`
 The deterministic, version-controlled ruleset the Correlation Engine evaluates (Chapter 8, Section 11) — governed exactly like the `nuclei_template_id` mapping (Chapter 8, Section 3.2) and `fingerprint_identifier_rules.py` (Chapter 8, Section 6): reviewed, checked into version control, never AI-authored. Every MVP category-pair rule sets `relationship_type_id` to `CORRELATED`. Cross-engine deduplication (Chapter 8, Section 5) is represented by one **reserved system row** — `code = 'CROSS_ENGINE_DEDUP'`, `relationship_type_id = DUPLICATE` — rather than a category-pair rule, so `DUPLICATE` edges still satisfy `finding_relationship.triggered_by_rule_id`'s `NOT NULL` constraint below: every relationship in the graph, without exception, traces back to a named, versioned mechanism.

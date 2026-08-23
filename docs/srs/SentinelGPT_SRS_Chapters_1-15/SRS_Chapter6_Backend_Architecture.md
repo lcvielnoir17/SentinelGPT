@@ -2,7 +2,7 @@
 ## AI-Assisted Vulnerability Assessment Platform
 
 **Chapter 6 — Backend Architecture**
-**Version:** 1.0 (Draft) | **Status:** For Review
+**Version:** 2.0 (Revised Draft) | **Status:** For Review
 **Prerequisite:** Chapters 1–5
 
 > This chapter goes one level deeper than Chapter 2 (System Architecture) and Chapter 3 (Technology Stack) into how the **FastAPI backend itself is structured internally** — layering, request lifecycle, configuration, background processing, and the discipline that keeps `domain/` logic persistence- and framework-agnostic as required by Chapter 3, Sections 9–11.

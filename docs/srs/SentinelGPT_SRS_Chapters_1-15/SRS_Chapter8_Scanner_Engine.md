@@ -2,7 +2,7 @@
 ## AI-Assisted Vulnerability Assessment Platform
 
 **Chapter 8 — Scanner Engine**
-**Version:** 1.0 (Draft) | **Status:** For Review
+**Version:** 2.0 (Revised Draft) | **Status:** For Review
 **Prerequisite:** Chapters 1–7
 
 > Deepens Chapter 2, Section 5, Chapter 3, Sections 3 & 13, and Chapter 4, Section 5 into the concrete internal design of the scanning subsystem — the part of the platform that touches authorized third-party targets and therefore carries the highest safety/legal stakes in the codebase.
@@ -208,6 +208,18 @@ Concrete checklist validating Chapter 4, Section 14's "new engine = no schema mi
 No step here touches the Scan Orchestrator, the API layer, or the frontend — the new engine's findings flow through the existing normalization → persistence → AI-explanation → reporting pipeline automatically.
 
 ---
+
+## 10. Contextual Priority Baseline
+
+SentinelGPT must not present a hand-chosen weighted score as universal security truth. For the MVP, a **transparent rule-based baseline** may combine normalized CVSS, exploitation signal, external exposure, asset criticality, and evidence confidence. The exact weights are configuration and must be versioned with experiments.
+
+The research compares at minimum:
+
+1. CVSS/severity-only ranking.
+2. Deterministic contextual baseline.
+3. SentinelGPT-assisted prioritization.
+
+Every priority decision stores its component inputs, policy/rule version, missing-data indicators, and rationale. AI may explain or propose a priority but cannot overwrite the deterministic canonical severity. Expert agreement is the primary external reference for evaluating prioritization quality.
 
 ## 11. Correlation Engine (Security Assessment Graph)
 

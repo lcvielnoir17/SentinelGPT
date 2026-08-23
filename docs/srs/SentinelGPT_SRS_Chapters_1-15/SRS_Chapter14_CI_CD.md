@@ -1,8 +1,12 @@
 # Software Requirements Specification
 ## AI-Assisted Vulnerability Assessment Platform
 
+### CI cadence boundary
+Fast correctness and security checks run on every pull request. Expensive scanner golden-file tests, live AI prompt-regression tests, and load tests run on nightly or release workflows. A passing PR therefore means fast-gate correctness, not that every external-tool suite has executed.
+
+
 **Chapter 14 — CI/CD**
-**Version:** 1.0 (Draft) | **Status:** For Review
+**Version:** 2.0 (Revised Draft) | **Status:** For Review
 **Prerequisite:** Chapters 1–13
 
 > Defines the automated pipeline that enforces every quality and security gate described in Chapters 3, 11, 12, and 13, and governs how code moves from a merged PR to running in production.
@@ -153,3 +157,7 @@ sequenceDiagram
 ---
 
 *End of Chapter 14. Chapter 15 (Implementation Guide) ties Chapters 1–14 together into a phased build roadmap.*
+
+## Testing Cadence Clarification
+
+Fast deterministic checks (lint, type-check, unit tests, integration tests, SAST and dependency scanning) run on every pull request. Full scanner golden-file suites, live Gemini prompt-regression suites, and load tests run nightly or pre-release because they are slower, rate-limited, or externally dependent.

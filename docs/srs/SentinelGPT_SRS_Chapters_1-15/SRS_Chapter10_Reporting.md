@@ -1,8 +1,12 @@
 # Software Requirements Specification
 ## AI-Assisted Vulnerability Assessment Platform
 
+### Research traceability requirement
+Reports must preserve the distinction between raw findings, correlated/deduplicated findings, contextual priority, AI interpretation, and human verification. Every AI-derived narrative must remain traceable to the underlying canonical finding/evidence records.
+
+
 **Chapter 10 — Reporting**
-**Version:** 1.0 (Draft) | **Status:** For Review
+**Version:** 2.0 (Revised Draft) | **Status:** For Review
 **Prerequisite:** Chapters 1–9
 
 > Deepens Chapter 4, Section 9 and Chapter 5, Section 10 into how validated findings and AI output (Chapter 9) become the PDF/JSON/CSV deliverables users actually share (Chapter 1, FR-18/FR-19, US-12).

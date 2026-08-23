@@ -3,7 +3,7 @@
 
 **Document Type:** Software Requirements Specification (SRS)
 **Chapter:** 5 — API Specification
-**Version:** 1.0 (Draft)
+**Version:** 2.0 (Revised Draft)
 **Status:** For Review
 **Prerequisite:** Chapters 1–4 (Foundations, Architecture, Tech Stack & Standards, Database Design)
 
@@ -37,7 +37,7 @@
 
 - **Base path:** `/api/v1/`
 - **Format:** JSON request/response bodies exclusively; `Content-Type: application/json`.
-- **Auth:** Bearer access token in `Authorization: Bearer <token>` header on every endpoint except `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`. The refresh token itself is never sent as a header or request body field — it travels exclusively as an HttpOnly, Secure, SameSite=Strict cookie the browser attaches automatically (Chapter 2, Section 9). This is the one auth mechanism used throughout this chapter; no endpoint accepts an alternative.
+- **Auth:** Short-lived access and refresh JWTs are delivered only through `HttpOnly; Secure; SameSite=Strict` cookies. JavaScript never reads either token and clients do not manually inject an `Authorization` header. `POST /auth/refresh` rotates the refresh token server-side and reissues both cookies. This single pattern is used throughout the API.
 - **IDs:** all resource identifiers are UUIDs (per Chapter 4 schema), represented as strings in JSON.
 - **Timestamps:** ISO 8601 UTC (`2026-08-08T09:15:00Z`) throughout.
 - **Idempotency:** state-changing `POST` endpoints that trigger side effects with cost or irreversibility (scan creation, report generation) accept an optional `Idempotency-Key` header; a repeated key within a 24-hour window returns the original response rather than re-executing the action.
@@ -52,15 +52,15 @@
 | Method | Path | Purpose | Request Body | Success Response |
 |---|---|---|---|---|
 | POST | `/auth/register` | Create a new user account | `{ email, password }` | `201` — `{ id, email, createdAt }` |
-| POST | `/auth/login` | Authenticate, receive tokens (or MFA challenge) | `{ email, password }` | `200` — `{ accessToken, expiresIn }` + `Set-Cookie: refreshToken` (HttpOnly), or `200` — `{ mfaRequired: true, mfaChallengeToken }` |
-| POST | `/auth/mfa/verify` | Complete MFA challenge | `{ mfaChallengeToken, code }` | `200` — `{ accessToken, expiresIn }` + `Set-Cookie: refreshToken` (HttpOnly) |
-| POST | `/auth/refresh` | Rotate access token using the refresh cookie | — (refresh token read from the HttpOnly cookie; requires header `X-Refresh-Request: 1`, Chapter 2 Section 9's CSRF mitigation) | `200` — `{ accessToken, expiresIn }` + `Set-Cookie: refreshToken` (rotated) |
-| POST | `/auth/logout` | Revoke current refresh token | — | `204` + `Set-Cookie: refreshToken=; Max-Age=0` (clears the cookie) |
+| POST | `/auth/login` | Authenticate, receive tokens (or MFA challenge) | `{ email, password }` | `200` — `{ user, expiresIn }` + `Set-Cookie: accessToken` and `Set-Cookie: refreshToken` (both HttpOnly), or `200` — `{ mfaRequired: true, mfaChallengeToken }` |
+| POST | `/auth/mfa/verify` | Complete MFA challenge | `{ mfaChallengeToken, code }` | `200` — `{ user, expiresIn }` + `Set-Cookie: accessToken` and `Set-Cookie: refreshToken` (both HttpOnly) |
+| POST | `/auth/refresh` | Rotate access token using the refresh cookie | — (refresh token read from the HttpOnly cookie; requires header `X-Refresh-Request: 1`, Chapter 2 Section 9's CSRF mitigation) | `200` — `{ user, expiresIn }` + `Set-Cookie: accessToken` and `Set-Cookie: refreshToken` (both rotated) |
+| POST | `/auth/logout` | Revoke current refresh token | — | `204` + clearing `accessToken` and `refreshToken` cookies |
 | GET | `/auth/me` | Fetch current authenticated user | — | `200` — `{ id, email, mfaEnabled, organizations: [...] }` |
 | POST | `/auth/mfa/enroll` | Begin MFA enrollment (returns provisioning secret/QR data) | — | `200` — `{ secret, otpauthUrl }` |
 
 **Design notes (traceable to Chapter 2, Section 9):**
-- `accessToken` is the only token ever present in a response *body*; `refreshToken` never appears in a JSON body anywhere in this API, in either direction — it is exclusively a `Set-Cookie` response header and an automatic browser-attached request cookie.
+- Neither JWT is present in a response JSON body. Both access and refresh tokens are delivered only through `Set-Cookie` response headers and are automatically attached by the browser as cookies; neither is readable by frontend JavaScript.
 - `expiresIn` reflects the short-lived access token policy (~15 min).
 - Failed login attempts are rate-limited and logged per `audit_log_entry` (`action_code = AUTH_LOGIN_FAILED`) to support brute-force detection, though only aggregate/anonymized detail is exposed to the client (no user enumeration via differing error messages between "unknown email" and "wrong password" — both return an identical `401`).
 - Refresh-token reuse (a rotated-out token presented again) revokes the entire token family server-side and returns `401`, forcing re-login — the concrete implementation of Chapter 2, Section 9's theft-detection behavior.
@@ -120,7 +120,7 @@ Maps to Chapter 4, Section 5.2 (`scan`).
 
 | Method | Path | Purpose | Request Body | Success Response |
 |---|---|---|---|---|
-| POST | `/scans` | Initiate a scan | `{ targetId, scanProfile: "quick-check" \| "standard" \| "full-assessment" }` | `202` — `{ id, status: "QUEUED", targetId, scanProfile, createdAt }` |
+| POST | `/scans` | Initiate an asynchronous scan | `{ targetId, scanProfile: "quick-check" \| "standard" \| "full-assessment" }` | `202` — `{ id, status: "QUEUED", targetId, scanProfile, createdAt }`; clients poll `GET /scans/{scanId}` or subscribe to the scan stream. |
 | GET | `/scans/{scanId}` | Get scan detail, including derived aggregate status | — | `200` — full scan object (Section 6.1 below) |
 | GET | `/scans` | List scans (history) | Query: `targetId?`, `status?`, `dateFrom?`, `dateTo?` | `200` — paginated list |
 | POST | `/scans/{scanId}/cancel` | Cancel a queued or running scan | — | `200` — `status: "CANCELLED"` |
@@ -354,7 +354,7 @@ All list endpoints use cursor-based pagination:
 
 ## 17. OpenAPI & Versioning Policy
 
-- The OpenAPI schema is auto-generated from FastAPI route definitions and Pydantic models (Chapter 3, Section 10) and published at `/api/v1/openapi.json`, with interactive docs at `/api/v1/docs`.
+- The OpenAPI schema is auto-generated from FastAPI route definitions and Pydantic models and published at `/api/v1/openapi.json`, with interactive docs at `/api/v1/docs`. Frontend types are generated from this schema; they are not manually duplicated.
 - **Breaking changes** (removing a field, changing a field's type, changing required-ness in a backward-incompatible way) require a new version prefix (`/api/v2/...`); the prior version remains available for a defined deprecation window.
 - **Non-breaking additions** (new optional fields, new endpoints) ship within the existing `/api/v1/` namespace without a version bump.
 - Every response includes an `X-API-Version` header for client-side diagnostics, independent of the URL path version.

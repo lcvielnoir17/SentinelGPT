@@ -2,7 +2,7 @@
 ## AI-Assisted Vulnerability Assessment Platform
 
 **Chapter 7 — Frontend Architecture**
-**Version:** 1.0 (Draft) | **Status:** For Review
+**Version:** 2.0 (Revised Draft) | **Status:** For Review
 **Prerequisite:** Chapters 1–6
 
 > Deepens Chapter 2, Section 4 (folder structure) and Chapter 3, Section 12 (coding standards) into how the React/TypeScript client is actually composed at runtime — state, data flow, real-time updates, and performance.
@@ -58,7 +58,7 @@ Recapping Chapter 2, Section 4's folder structure, the runtime rule is: **a feat
 | **Server state** (scans, findings, targets, reports — anything from the API) | TanStack Query | Automatic caching, background refetch, and request deduplication; server state is never duplicated into a global store. |
 | **Real-time-updated state** (live scan progress) | TanStack Query cache, updated via WebSocket event handlers calling `queryClient.setQueryData(...)` | Keeps a single source of truth — the WebSocket doesn't maintain its own parallel state tree; it patches the same cache REST calls populate. |
 | **Local UI state** (modal open/closed, form draft, selected filter) | Component-local `useState`/`useReducer` | No global store needed for state that doesn't outlive the component. |
-| **Auth/session state** | Small dedicated context (`AuthProvider`) holding the current user object and the **access token, in memory only** (a React state variable — never `localStorage`, never a cookie the frontend sets itself) | Narrow, purpose-specific — not a general-purpose global store. The access token is intentionally lost on full page reload; `AuthProvider` silently calls `/auth/refresh` on mount to get a new one from the HttpOnly refresh cookie the browser already holds (Chapter 2, Section 9). |
+| **Auth/session state** | Small dedicated context (`AuthProvider`) holding the current user object and session state; tokens are **HttpOnly cookies and are never exposed to JavaScript** | Narrow, purpose-specific — the browser manages token cookies automatically; `AuthProvider` calls `/auth/refresh` when needed without reading or storing tokens. |
 
 **Explicit non-choice:** no Redux/global state library. Given server state (the large majority of this app's data) is fully owned by TanStack Query, a second global store would create two sources of truth for the same data — a known anti-pattern this architecture deliberately avoids.
 
@@ -66,7 +66,7 @@ Recapping Chapter 2, Section 4's folder structure, the runtime rule is: **a feat
 
 ## 4. Data Fetching & Caching Layer
 
-- All requests flow through the centralized `apiClient` (Chapter 2/3). It reads `AuthProvider`'s in-memory access token to set `Authorization: Bearer <token>` on every request; it never reads, sets, or references the refresh token in any form — that cookie is HttpOnly specifically so no frontend code, including `apiClient`, can touch it. On a `401`, `apiClient` calls `POST /auth/refresh` (browser auto-attaches the refresh cookie), stores the new access token in `AuthProvider`, and retries the original request exactly once before surfacing the error. All error shapes are normalized to the catalog in Chapter 5, Section 14.
+- All requests flow through the centralized `apiClient` (Chapter 2/3). It relies on browser-managed HttpOnly cookies for authentication and never reads or injects JWTs. On a `401`, `apiClient` calls `POST /auth/refresh` (browser auto-attaches the refresh cookie), then retries the original request exactly once before surfacing the error. All error shapes are normalized to the catalog in Chapter 5, Section 14.
 - **Query key conventions:** `['scans', scanId]`, `['scans', { targetId, status }]`, `['findings', scanId]` — structured so that a mutation (e.g., scan cancellation) can precisely invalidate only the affected queries rather than a broad cache flush.
 - **Optimistic updates** are used sparingly and only for low-risk, easily-reversible actions (e.g., marking a notification read) — scan-lifecycle-affecting actions (cancel, rescan) wait for server confirmation before updating the UI, given the cost of showing an incorrect scan state.
 - **Stale-time tuning:** dashboard aggregates use a short stale time (~30s) given their summary nature; individual scan/finding detail views rely primarily on WebSocket push rather than polling once a scan is actively running.

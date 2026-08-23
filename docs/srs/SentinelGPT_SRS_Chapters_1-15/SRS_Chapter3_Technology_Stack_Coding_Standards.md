@@ -3,7 +3,7 @@
 
 **Document Type:** Software Requirements Specification (SRS)
 **Chapter:** 3 — Technology Stack & Coding Standards
-**Version:** 1.0 (Draft)
+**Version:** 2.0 (Revised Draft)
 **Status:** For Review
 **Prerequisite:** Chapter 1 (Foundations), Chapter 2 (System Architecture)
 
@@ -35,6 +35,10 @@
 ---
 
 ## 1. Technology Stack Overview
+
+### Research-aligned implementation rule
+
+The implementation must preserve the boundary between **fact generation** and **AI interpretation**. Scanner adapters and deterministic correlation/enrichment code establish canonical evidence and relationships; Gemini is used only for evidence-grounded interpretation, explanation, and narrative synthesis. Any model output that could alter canonical findings, severity, lifecycle status, or authorization state must be rejected by the application.
 
 | Layer | Technology | Status |
 |---|---|---|

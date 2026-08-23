@@ -2,7 +2,7 @@
 ## AI-Assisted Vulnerability Assessment Platform
 
 **Chapter 9 — AI Analysis**
-**Version:** 1.0 (Draft) | **Status:** For Review
+**Version:** 2.0 (Revised Draft) | **Status:** For Review
 **Prerequisite:** Chapters 1–8
 
 > Deepens Chapter 2, Section 6, Chapter 3, Sections 4 & 14, and Chapter 4, Section 7 into the concrete prompt design, structured-output contract, and validation logic that keep Gemini-generated content grounded in real scan evidence — the single highest-trust-risk subsystem in the platform (Chapter 1, R-02).

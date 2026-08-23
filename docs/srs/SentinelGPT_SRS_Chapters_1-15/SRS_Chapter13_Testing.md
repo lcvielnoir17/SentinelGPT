@@ -1,8 +1,12 @@
 # Software Requirements Specification
 ## AI-Assisted Vulnerability Assessment Platform
 
+### Evaluation-test boundary
+Testing must distinguish software correctness tests from research evaluation. Property-based tests are focused on target normalization/SSRF validation, fingerprint generation, and scanner-output parsers. Research evaluation separately measures correlation, prioritization, efficiency, grounding, and reproducibility.
+
+
 **Chapter 13 — Testing**
-**Version:** 1.0 (Draft) | **Status:** For Review
+**Version:** 2.0 (Revised Draft) | **Status:** For Review
 **Prerequisite:** Chapters 1–12
 
 > Expands Chapter 3, Section 15's testing standards into a full test strategy, with particular depth on the two hardest-to-test subsystems in this platform: scanner engines (which touch real network targets) and AI output (which is inherently non-deterministic).

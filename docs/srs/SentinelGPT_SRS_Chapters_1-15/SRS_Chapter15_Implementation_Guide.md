@@ -2,7 +2,7 @@
 ## AI-Assisted Vulnerability Assessment Platform
 
 **Chapter 15 — Implementation Guide**
-**Version:** 1.0 (Draft) | **Status:** For Review
+**Version:** 2.0 (Revised Draft) | **Status:** For Review
 **Prerequisite:** Chapters 1–14
 
 > This closing chapter converts Chapters 1–14 from a specification into an actionable, phased build plan — what to build first, why in that order, and how each phase is verified as done before starting the next.
@@ -96,6 +96,17 @@ Three principles drive the ordering below, all traceable to earlier chapters:
 **Exit criterion:** every finding from a real scan carries either a `VALIDATED` AI explanation or a clearly labeled `FALLBACK_USED` one — never an unvalidated or missing explanation — verified via the traceability test suite (Chapter 13, Section 5).
 
 ---
+
+## 6. Research Evaluation Slice
+
+**Goal:** evaluate the intelligence layer before polishing the product.
+
+- Prepare controlled/seeded authorized test cases with known ground truth.
+- Run the same cases through (A) individual scanner output, (B) rule-based multi-tool aggregation, and (C) SentinelGPT-assisted analysis.
+- Measure duplicate reduction, precision/recall/F1 of correlation, incorrect merges, missed duplicates, prioritization agreement with expert judgments, evidence-grounding errors, and analyst triage time.
+- Record scanner versions, correlation-rule versions, prompt/model identifiers, and test configuration so results are reproducible.
+
+**Exit criterion:** the project has a reproducible evaluation dataset and baseline results before final claims about SentinelGPT's effectiveness are written.
 
 ## 6. Phase 4: Reporting & Dashboard
 

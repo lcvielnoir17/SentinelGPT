@@ -1,8 +1,12 @@
 # Software Requirements Specification
 ## AI-Assisted Vulnerability Assessment Platform
 
+### MVP deployment boundary
+Docker Compose on a single development/demo host is the required MVP deployment target. Kubernetes, autoscaling, KEDA, service mesh, and progressive/canary deployment remain future production-scale targets and are not implementation prerequisites for the student MVP.
+
+
 **Chapter 12 — DevOps & Docker**
-**Version:** 1.0 (Draft) | **Status:** For Review
+**Version:** 2.0 (Revised Draft) | **Status:** For Review
 **Prerequisite:** Chapters 1–11
 
 > Concrete containerization and deployment design implementing the infrastructure choices from Chapter 3, Section 7 and the sandbox/security requirements from Chapters 8 and 11.
@@ -25,6 +29,12 @@
 10. Observability Stack
 
 ---
+
+## MVP / Production-Future Boundary
+
+**MVP:** Docker Compose on a single development or free-tier host, one PostgreSQL instance, one Redis instance, one API/worker process per service, and no Kubernetes/autoscaling/service mesh. The MVP is the implementation target for this research project.
+
+**Production-Future:** Kubernetes, managed databases/object storage, autoscaling, service mesh, admission control, and multi-node observability are documented as future-scale architecture only. They must not be treated as prerequisites for the research prototype or its evaluation.
 
 ## 1. MVP Deployment Architecture
 
