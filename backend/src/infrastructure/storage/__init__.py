@@ -1,0 +1,1 @@
+"""Object storage client package."""
