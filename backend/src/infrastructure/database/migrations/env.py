@@ -9,6 +9,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from src.config.settings import get_settings
+from src.infrastructure.database.models import Base
 
 config = context.config
 
@@ -19,8 +20,9 @@ if config.config_file_name is not None:
 settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
-# Target metadata for autogenerate will be configured as models are added in Phase 1
-target_metadata = None
+# Autogenerate source of truth — all persistence models are imported via the
+# models package so every table is visible to Alembic.
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:

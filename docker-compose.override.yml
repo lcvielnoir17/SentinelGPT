@@ -1,0 +1,32 @@
+# =============================================================================
+# SentinelGPT — LOCAL DEVELOPMENT OVERRIDE (docker compose override)
+#
+# Auto-loaded by plain `docker compose up`. Publishes loopback-only ports for
+# direct host access (psql, redis-cli, curl to the API) and enables debug +
+# hot-reload. Never used on the deployment path: passing any `-f` flag skips
+# automatic override loading entirely.
+# =============================================================================
+
+services:
+  api:
+    # Loopback-only: reachable from the host machine, not from the network.
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - DEBUG=true
+    volumes:
+      - ./backend/src:/app/backend/src
+    command:
+      ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  frontend:
+    ports:
+      - "127.0.0.1:3000:8080"
+
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"

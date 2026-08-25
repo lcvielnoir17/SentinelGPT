@@ -3,8 +3,17 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Well-known insecure development placeholder. Refused outside local/test so a
+# missing environment variable can never silently boot a deployed environment
+# with a publicly-known signing key (SRS Chapter 6, Section 5 fail-fast rule;
+# Chapter 11, Section 4 secrets policy).
+DEVELOPMENT_INSECURE_JWT_SECRET = (
+    "development-insecure-secret-key-change-in-production-min-32-chars"
+)
+MIN_PRODUCTION_SECRET_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -81,6 +90,30 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
     ]
+
+    @model_validator(mode="after")
+    def validate_deployed_environment_security(self) -> "Settings":
+        """Fail fast when a deployed environment would boot insecurely.
+
+        local/test keep full developer ergonomics (insecure placeholder secret,
+        debug mode). staging/production refuse to start with the known
+        development secret, a short secret, or debug enabled.
+        """
+        if self.environment in ("staging", "production"):
+            secret_is_weak = (
+                not self.jwt_secret_key
+                or self.jwt_secret_key == DEVELOPMENT_INSECURE_JWT_SECRET
+                or len(self.jwt_secret_key) < MIN_PRODUCTION_SECRET_LENGTH
+            )
+            if secret_is_weak:
+                raise ValueError(
+                    "JWT_SECRET_KEY must be overridden with a strong, unique "
+                    f"secret of at least {MIN_PRODUCTION_SECRET_LENGTH} characters "
+                    f"when ENVIRONMENT={self.environment!r}."
+                )
+            if self.debug:
+                raise ValueError(f"DEBUG must be false when ENVIRONMENT={self.environment!r}.")
+        return self
 
 
 @lru_cache

@@ -1,3 +1,28 @@
+# =============================================================================
+# SentinelGPT — Docker Compose stack
+#
+# File strategy (SRS Chapter 12, Sections 3 & 6):
+#   * docker-compose.yml            — PRODUCTION-SAFE BASE. No database/cache
+#                                     ports are published to the host and all
+#                                     credentials come strictly from the
+#                                     environment (.env); missing credentials
+#                                     fail fast instead of falling back to
+#                                     known defaults.
+#   * docker-compose.override.yml   — LOCAL DEV convenience (auto-loaded by
+#                                     plain `docker compose up`): loopback-only
+#                                     published ports, debug/hot-reload on.
+#   * docker-compose.production.yml — PUBLIC DEMO overlay (explicitly selected
+#                                     with -f): adds the Caddy TLS edge. Never
+#                                     exposes Postgres/Redis.
+#
+# Local development:      docker compose up
+# Public demo deployment: docker compose -f docker-compose.yml \
+#                             -f docker-compose.production.yml up -d --build
+#
+# NOTE: `-f` disables automatic override loading — that is what keeps the
+# deployment path from inheriting dev conveniences.
+# =============================================================================
+
 services:
   api:
     build:
@@ -5,17 +30,19 @@ services:
       dockerfile: Dockerfile
     container_name: sentinelgpt-api
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    # No host port binding here — the reverse proxy (production overlay) or the
+    # local override is the only supported ingress.
     environment:
-      - ENVIRONMENT=local
-      - DEBUG=true
-      - LOG_LEVEL=INFO
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/sentinelgpt
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/1
-      - CELERY_RESULT_BACKEND=redis://redis:6379/2
-      - JWT_SECRET_KEY=development-insecure-secret-key-change-in-production-min-32-chars
+      - ENVIRONMENT=${ENVIRONMENT:-local}
+      - DEBUG=${DEBUG:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_JSON=${LOG_JSON:-false}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required (copy .env.example)}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required (copy .env.example)}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/2
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required (copy .env.example; staging/production must use a strong unique value)}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -24,20 +51,30 @@ services:
     networks:
       - sentinelgpt-internal
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sentinelgpt-frontend
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - sentinelgpt-internal
+
   postgres:
     image: postgres:16-alpine
     container_name: sentinelgpt-postgres
     restart: unless-stopped
-    ports:
-      - "5432:5432"
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=sentinelgpt
+      - POSTGRES_USER=${POSTGRES_USER:?POSTGRES_USER is required (copy .env.example)}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (copy .env.example)}
+      - POSTGRES_DB=${POSTGRES_DB:?POSTGRES_DB is required (copy .env.example)}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d sentinelgpt"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -48,15 +85,16 @@ services:
     image: redis:7-alpine
     container_name: sentinelgpt-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required (copy .env.example)}"]
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} ping | grep PONG"]
       interval: 5s
       timeout: 5s
       retries: 5
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     networks:
       - sentinelgpt-internal
 

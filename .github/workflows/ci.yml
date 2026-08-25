@@ -20,10 +20,11 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Install dependencies (locked, hash-verified)
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[dev]
+          pip install --require-hashes -r requirements-dev.lock
+          pip install -e . --no-deps
 
       - name: Run Ruff Lint
         run: ruff check .
@@ -47,13 +48,63 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Install dependencies (locked, hash-verified)
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[dev]
+          pip install --require-hashes -r requirements-dev.lock
+          pip install -e . --no-deps
 
       - name: Run Unit Tests
         run: pytest -v tests/unit
 
       - name: Run Security SAST (Bandit)
-        run: bandit -r backend/src -c pyproject.toml || bandit -r backend/src -ll
+        run: bandit -r backend/src -ll
+
+  dependency-scan:
+    name: Dependency Vulnerability Scan (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: python -m pip install --upgrade pip pip-audit
+
+      # SRS Chapter 14, Section 2 fast tier: dependency scan is a required PR
+      # gate. Auditing the LOCKED dependency set so the gate reflects exactly
+      # what CI and Docker deploy. Fails on any known vulnerability.
+      - name: Audit runtime dependencies
+        run: pip-audit -r requirements.lock --strict
+
+  frontend-build:
+    name: Frontend Build Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install (reproducible, from lockfile)
+        run: npm ci
+
+      - name: Type-check and build
+        run: npm run build
+
+      # SRS Chapter 14, Section 2: dependency scan blocks on critical/high.
+      # Moderate dev-toolchain advisories do not block the fast tier.
+      - name: Audit frontend dependencies (critical/high policy)
+        run: npm audit --audit-level=high

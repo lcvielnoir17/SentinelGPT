@@ -28,7 +28,7 @@ SentinelGPT is an AI-assisted vulnerability assessment and intelligence platform
    ```bash
    pip install -e .[dev]
    ```
-3. Copy environment configuration:
+3. Copy environment configuration and adjust values:
    ```bash
    cp .env.example .env
    ```
@@ -36,3 +36,25 @@ SentinelGPT is an AI-assisted vulnerability assessment and intelligence platform
    ```bash
    pytest
    ```
+5. Full stack via Docker (frontend on http://localhost:3000, API on
+   http://localhost:8000):
+   ```bash
+   docker compose up --build
+   ```
+6. Apply database migrations against the running Postgres:
+   ```bash
+   alembic upgrade head
+   ```
+
+### Dependency locking
+
+CI and Docker builds install from the hash-pinned lock files
+(`requirements.lock`, `requirements-dev.lock`) per the SRS pinning rule.
+Regenerate them inside `linux/python:3.12` after changing `pyproject.toml` —
+see the header of either lock file for the exact command.
+
+### Deployment profiles
+
+- Local dev: `docker compose up` (loopback-only ports, debug/hot-reload).
+- Public demo: `docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build`
+  (Caddy TLS edge; Postgres/Redis never published).

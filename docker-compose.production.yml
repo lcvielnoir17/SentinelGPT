@@ -1,0 +1,39 @@
+# =============================================================================
+# SentinelGPT — PRODUCTION / PUBLIC-DEMO OVERLAY (explicitly selected)
+#
+#   docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+#
+# Adds the Caddy TLS edge (SRS Chapter 12, Sections 1 & 3). Postgres and Redis
+# remain unreachable from outside the Compose network — they publish no host
+# ports in this overlay, matching the Chapter 12 Section 9 segmentation rule.
+# Set SITE_ADDRESS in .env when serving a real domain (enables automatic
+# Let's Encrypt certificates).
+# =============================================================================
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: sentinelgpt-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - SITE_ADDRESS=${SITE_ADDRESS:-:80}
+    volumes:
+      - ./infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    networks:
+      - sentinelgpt-internal
+
+volumes:
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local

@@ -10,6 +10,8 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from src.api.middlewares.error_handlers import register_exception_handlers
+from src.api.routes import api_router
 from src.api.routes.health import router as health_router
 from src.config.settings import Settings, get_settings
 from src.infrastructure.cache.redis_client import close_redis_client
@@ -66,6 +68,7 @@ def create_application() -> FastAPI:
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        request.state.request_id = request_id  # reused by error handlers
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(
             request_id=request_id,
@@ -100,9 +103,13 @@ def create_application() -> FastAPI:
                 headers={"X-Request-ID": request_id},
             )
 
-    # Include Routes
+    # Centralized error-envelope handlers (SRS Chapter 5, Section 14)
+    register_exception_handlers(app)
+
+    # Include Routes: operational probes stay unprefixed (Chapter 6, Section 10);
+    # versioned business routes mount under /api/v1 (Chapter 5, Section 1).
     app.include_router(health_router)
-    app.include_router(health_router, prefix=settings.api_v1_prefix)
+    app.include_router(api_router)
 
     return app
 
