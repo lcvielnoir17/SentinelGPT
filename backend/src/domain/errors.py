@@ -95,3 +95,62 @@ class RefreshCsrfHeaderMissingError(DomainError):
     status_code = 403
     code = "FORBIDDEN"
     message = "Missing required X-Refresh-Request header."
+
+
+# ---------------------------------------------------------------------------
+# Scanner security boundary (SRS Chapter 11 Section 6; ADR-0001/0002).
+# Client-facing messages stay generic: DNS/infrastructure detail is logged
+# server-side only.
+# ---------------------------------------------------------------------------
+
+
+class TargetUnresolvedError(DomainError):
+    """Scan-time resolution produced no usable address set (503)."""
+
+    status_code = 503
+    code = "TARGET_UNRESOLVED"
+    message = "Target could not be resolved for scanning."
+
+
+class TargetResolutionBlockedError(DomainError):
+    """A resolved address (or redirect destination) is prohibited (403).
+
+    Per SRS Chapter 5, Section 14: TARGET_RESOLUTION_BLOCKED.
+    """
+
+    status_code = 403
+    code = "TARGET_RESOLUTION_BLOCKED"
+    message = "Target resolves to a disallowed address."
+
+
+class DnsRebindingDetectedError(TargetResolutionBlockedError):
+    """Connection-time resolution disagrees with the validated binding.
+
+    Shares the generic TARGET_RESOLUTION_BLOCKED envelope — rebinding
+    detection detail remains server-side.
+    """
+
+
+class RedirectDestinationBlockedError(TargetResolutionBlockedError):
+    """A redirect destination failed revalidation (same generic envelope)."""
+
+
+class EgressDeniedError(DomainError):
+    """Destination outside the validated binding's address set (403)."""
+
+    status_code = 403
+    code = "EGRESS_DENIED"
+    message = "Destination is not authorized by the scan egress policy."
+
+
+class ScannerExecutionBlockedError(DomainError):
+    """Any scanner-engine execution attempt in this phase (501).
+
+    Chapter 15 Phase 2 places real engines behind an explicit guard; until
+    that phase lands, execution is structurally refused BEFORE any network
+    activity can occur.
+    """
+
+    status_code = 501
+    code = "SCANNER_EXECUTION_BLOCKED"
+    message = "Scanner execution is not available."
