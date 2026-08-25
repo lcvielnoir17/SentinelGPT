@@ -3,9 +3,15 @@
 # API Constants
 API_V1_STR: str = "/api/v1"
 
-# Authentication cookies (SRS Chapter 2, Section 9 invariants): HttpOnly;
-# Secure; SameSite=Strict. The access cookie is issued by /auth/login.
+# Authentication cookies (SRS Chapter 2, Section 9 invariants). The refresh
+# cookie is scoped to the auth routes; both share HttpOnly/Secure/SameSite=Strict.
 ACCESS_TOKEN_COOKIE: str = "accessToken"
+REFRESH_TOKEN_COOKIE: str = "refreshToken"
+REFRESH_COOKIE_PATH: str = f"{API_V1_STR}/auth"
+
+# CSRF mitigation header required by /auth/refresh and /auth/logout (Ch2 §9):
+# cross-site form posts cannot set custom headers.
+CSRF_REFRESH_HEADER: str = "X-Refresh-Request"
 
 # Environment Names
 ENV_LOCAL: str = "local"

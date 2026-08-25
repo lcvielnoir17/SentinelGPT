@@ -63,9 +63,20 @@ def fake_repo_state(mocker):
 async def client(fake_repo_state) -> AsyncClient:
     application = create_application()
 
-    # Unit tests must never open a real database connection.
+    # Unit tests must never open a real database connection. Login now also
+    # stages a refresh-session row, so the stub needs the write surface.
+    class _StubSession:
+        async def commit(self) -> None:
+            return None
+
+        def add(self, _obj: object) -> None:
+            return None
+
+        async def flush(self) -> None:
+            return None
+
     async def _overridden_session():
-        yield object()
+        yield _StubSession()
 
     application.dependency_overrides[get_db_session] = _overridden_session
 

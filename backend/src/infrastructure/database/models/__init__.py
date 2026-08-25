@@ -19,6 +19,7 @@ from src.infrastructure.database.models.lookup_models import (
     ScanStatus,
     SeverityLevel,
 )
+from src.infrastructure.database.models.refresh_session_models import RefreshSession
 from src.infrastructure.database.models.target_models import Target
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "Organization",
     "OrganizationMembership",
     "Target",
+    "RefreshSession",
     "SeverityLevel",
     "FindingCategory",
     "ScanStatus",
