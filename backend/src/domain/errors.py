@@ -154,3 +154,42 @@ class ScannerExecutionBlockedError(DomainError):
     status_code = 501
     code = "SCANNER_EXECUTION_BLOCKED"
     message = "Scanner execution is not available."
+
+
+# ---------------------------------------------------------------------------
+# Runtime egress sandbox (Phase 2; ADR-0003). Infrastructure failures are
+# fail-closed: an unestablishable/unverifiable sandbox must never degrade
+# into "run anyway". Client messages stay generic; detail is server-side.
+# ---------------------------------------------------------------------------
+
+
+class SandboxUnavailableError(DomainError):
+    """The runtime lacks sandbox prerequisites entirely (503)."""
+
+    status_code = 503
+    code = "SANDBOX_UNAVAILABLE"
+    message = "Scan sandbox is not available on this runtime."
+
+
+class SandboxSetupFailedError(DomainError):
+    """Sandbox creation or egress-policy installation failed (503)."""
+
+    status_code = 503
+    code = "SANDBOX_SETUP_FAILED"
+    message = "Scan sandbox could not be established."
+
+
+class SandboxVerificationFailedError(DomainError):
+    """Post-installation verification contradicted the requested policy (503)."""
+
+    status_code = 503
+    code = "SANDBOX_VERIFICATION_FAILED"
+    message = "Scan sandbox failed verification."
+
+
+class SandboxNotEstablishedError(DomainError):
+    """Execution was attempted before sandbox establishment succeeded (503)."""
+
+    status_code = 503
+    code = "SANDBOX_NOT_ESTABLISHED"
+    message = "Scan sandbox is not established."
