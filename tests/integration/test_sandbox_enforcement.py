@@ -45,32 +45,35 @@ def test_authorized_target_reachable_through_sandbox(seeded_targets, make_sandbo
     assert "CONNECTED" in result.stdout
 
 
-@pytest.mark.parametrize(
-    ("pick", "host", "port", "label"),
-    [
-        ("auth_ip", "127.0.0.1", 9999, "loopback"),
-        ("private_ip", None, 9999, "RFC1918 peer with live listener"),
-        ("auth_ip", "192.0.2.1", 81, "TEST-NET unrelated public"),
-        ("auth_ip", "169.254.169.254", 80, "cloud metadata"),
-        ("auth_ip", "10.9.9.9", 81, "other RFC1918"),
-        ("auth_ip", "fd00::5", 443, "IPv6 ULA"),
-        ("auth_ip", "::1", 9999, "IPv6 loopback"),
-        ("auth_ip", "0.0.0.0", 81, "unspecified"),
-    ],
+DENIAL_MATRIX = (
+    ("loopback", "127.0.0.1", 9999),
+    ("RFC1918 peer with live listener", None, 9999),  # resolved to private_ip
+    ("TEST-NET unrelated public", "192.0.2.1", 81),
+    ("cloud metadata", "169.254.169.254", 80),
+    ("other RFC1918", "10.9.9.9", 81),
+    ("IPv6 ULA", "fd00::5", 443),
+    ("IPv6 loopback", "::1", 9999),
+    ("unspecified", "0.0.0.0", 81),
 )
-def test_prohibited_destinations_are_actually_unreachable(
-    seeded_targets, make_sandbox, pick: str, host: str | None, port: int, label: str
-) -> None:
-    """Each attempt is a real connect; netfilter must deny it."""
-    target_host = host if host is not None else str(getattr(seeded_targets, pick))
+
+
+def test_prohibited_destinations_are_actually_unreachable(seeded_targets, make_sandbox) -> None:
+    """Each entry is a REAL connect from inside the sandbox; netfilter must
+    deny every one while the single authorized destination still works."""
     sandbox = make_sandbox(seeded_targets.auth_ip)
     sandbox.establish()
 
-    attempted = _connect(sandbox, target_host, port)
-    assert attempted.exit_code != 0, (
-        f"{label} ({target_host}:{port}) was REACHABLE through the sandbox — "
-        "network enforcement FAILED"
-    )
+    # Positive control: traffic genuinely traverses the sandbox.
+    ok = _connect(sandbox, str(seeded_targets.auth_ip), 9999)
+    assert ok.exit_code == 0, ok.stderr
+
+    for label, host, port in DENIAL_MATRIX:
+        target_host = host if host is not None else str(seeded_targets.private_ip)
+        attempted = _connect(sandbox, target_host, port)
+        assert attempted.exit_code != 0, (
+            f"{label} ({target_host}:{port}) was REACHABLE through the sandbox — "
+            "network enforcement FAILED"
+        )
 
 
 def test_verification_receipt_shows_drop_on_both_families(seeded_targets, make_sandbox) -> None:

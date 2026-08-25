@@ -56,8 +56,23 @@ PROBE_CONNECT = (
 )
 
 
-def sh(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, capture_output=True, text=True, check=False)
+def sh(*args: str, timeout_s: float = 25.0) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, capture_output=True, text=True, check=False, timeout=timeout_s)
+
+
+@pytest.fixture
+def daemon_alive(docker_runtime: None) -> None:
+    """Fail fast per-test when Docker Desktop has wedged/paused mid-run.
+
+    Without this, each docker call would burn its full client-side timeout
+    and a transient Desktop pause would look like a multi-minute hang.
+    """
+    try:
+        alive = sh("docker", "info", timeout_s=10)
+    except subprocess.TimeoutExpired:
+        pytest.skip("docker daemon unresponsive (Desktop pause/wedge)")
+    if alive.returncode != 0:
+        pytest.skip("docker daemon not reachable")
 
 
 @pytest.fixture(scope="session")
@@ -150,7 +165,7 @@ def seeded_targets(docker_runtime: None) -> types.SimpleNamespace:
 
 @pytest.fixture
 def make_sandbox(
-    docker_runtime: None, seeded_targets: types.SimpleNamespace
+    docker_runtime: None, daemon_alive: None, seeded_targets: types.SimpleNamespace
 ) -> Iterator[Callable[..., DockerEgressSandbox]]:
     """Factory binding sandboxes to the fixture network; tears down after."""
     made: list[DockerEgressSandbox] = []
