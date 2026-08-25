@@ -4,9 +4,9 @@
 
 The architecture treats SentinelGPT as a **vulnerability-intelligence and analysis pipeline**, not an autonomous penetration-testing agent. The canonical flow is:
 
-`authorized scan → raw evidence → normalized observations → candidate findings → deterministic correlation/deduplication → contextual enrichment → evidence-grounded AI interpretation → deterministic validation → human verification → prioritized reporting`
+`authorized scan → raw evidence → normalized observations → candidate findings → deterministic correlation/deduplication → contextual enrichment → evidence-grounded AI interpretation → deterministic validation → prioritized reporting`
 
-Scanners remain the source of detection evidence. The normalization layer first creates lossless **observations** from tool output; only subsequent deterministic logic promotes observations into canonical findings and relationships. The AI layer interprets supplied evidence and must not originate findings, silently merge findings, assign canonical severity, or initiate exploitation. This separation is required for reproducibility and for the research evaluation described in Chapter 1.
+Scanners remain the source of detection evidence. The normalization layer first creates lossless **observations** from tool output; only subsequent deterministic logic promotes observations into canonical findings and relationships. The AI layer interprets supplied evidence and must not originate findings, silently merge findings, assign canonical severity, or initiate exploitation. This separation is required for reproducibility and for the research evaluation described in Chapter 1. The pipeline runs without a human-approval step: human experts are used only during research evaluation, to establish ground truth and measure accuracy, reliability, and reproducibility.
 ## AI-Assisted Vulnerability Assessment Platform
 
 **Document Type:** Software Requirements Specification (SRS)
@@ -434,7 +434,7 @@ The system distinguishes **raw evidence**, **observations**, and **findings**:
 2. **Observation** is a normalized statement of what a tool actually observed (for example, an open port, an HTTP 200 response for `/admin`, or a Nuclei template match). An observation is not automatically a verified vulnerability.
 3. **Candidate finding** is a normalized security issue assembled from one or more observations.
 4. **Correlated finding/relationship** is produced only after candidate findings are compared using deterministic rules and, where appropriate, constrained AI classification.
-5. **Verified finding** records whether automated checks or a human reviewer confirmed the interpretation.
+5. **Verified finding** records whether automated checks confirmed the interpretation (human verification is used only during research evaluation and is never a required operational step).
 
 This separation prevents a scanner alert, semantic similarity, or LLM output from being treated as proof by default. Every transition remains traceable to its source evidence.
 

@@ -3,8 +3,8 @@
 This package contains the revised Chapters 1–15 for the SentinelGPT project.
 
 ## Main alignment changes
-- Repositioned SentinelGPT as a human-supervised vulnerability-intelligence/analysis platform rather than an autonomous pentester.
-- Made the research pipeline explicit: authorized scan → evidence → normalization → deterministic correlation/deduplication → enrichment → evidence-grounded AI interpretation → validation → human verification → prioritized reporting.
+- Repositioned SentinelGPT as an AI-powered vulnerability-analysis platform in which the AI is the primary analytical component, rather than an autonomous pentester.
+- Made the research pipeline explicit and fully automatic: authorized scan → evidence → normalization → deterministic correlation/deduplication → enrichment → evidence-grounded AI interpretation → validation → prioritized reporting. Human experts are used only during research evaluation (ground truth, accuracy/reliability measurement), never as an operational approval step.
 - Clarified that scanners establish evidence and the AI layer interprets supplied evidence; AI does not originate canonical findings, severity, lifecycle state, authorization, or new relationships.
 - Made `finding_relationship` the single canonical persistence mechanism for relationships between findings.
 - Added explicit research evaluation objectives covering correlation, prioritization, analyst efficiency, AI trustworthiness, and reproducibility.

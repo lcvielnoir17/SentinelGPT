@@ -2,7 +2,7 @@
 ## AI-Assisted Vulnerability Assessment Platform
 
 ### Research traceability requirement
-Reports must preserve the distinction between raw findings, correlated/deduplicated findings, contextual priority, AI interpretation, and human verification. Every AI-derived narrative must remain traceable to the underlying canonical finding/evidence records.
+Reports must preserve the distinction between raw findings, correlated/deduplicated findings, contextual priority, AI interpretation, and their underlying evidence provenance. Every AI-derived narrative must remain traceable to the underlying canonical finding/evidence records.
 
 
 **Chapter 10 — Reporting**

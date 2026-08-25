@@ -45,7 +45,7 @@ def create_application() -> FastAPI:
 
     app = FastAPI(
         title=settings.app_name,
-        description="SentinelGPT: Human-Supervised Vulnerability Intelligence & AI Analysis Platform",
+        description="SentinelGPT: AI-Powered Vulnerability Analysis Platform",
         version=settings.app_version,
         openapi_url=f"{settings.api_v1_prefix}/openapi.json",
         docs_url="/docs",

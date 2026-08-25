@@ -46,7 +46,7 @@ export function AuthPage() {
     <main className="auth-page">
       <section className="auth-card" aria-label="Authentication">
         <h1>SentinelGPT</h1>
-        <p className="auth-subtitle">Human-supervised vulnerability intelligence</p>
+        <p className="auth-subtitle">AI-powered vulnerability analysis</p>
 
         <div className="mode-toggle" role="tablist" aria-label="Authentication mode">
           <button

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "sentinelgpt"
 version = "0.1.0"
-description = "SentinelGPT: Human-Supervised Vulnerability Intelligence & AI Analysis Platform"
+description = "SentinelGPT: AI-Powered Vulnerability Analysis Platform"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [

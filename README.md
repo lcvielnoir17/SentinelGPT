@@ -1,11 +1,12 @@
 # SentinelGPT
 
-SentinelGPT is an AI-assisted vulnerability assessment and intelligence platform designed as an analyst-support system. It correlates heterogeneous findings from multiple authorized security tools, enriches them with contextual information, and uses evidence-grounded AI to assist human analysts in prioritization, explanation, and triage.
+SentinelGPT is an AI-powered vulnerability-analysis platform in which the AI is the primary analytical component. The system automatically ingests findings from authorized security tools, normalizes them, correlates related findings, deduplicates them, assesses severity and risk, prioritizes vulnerabilities, explains findings using available evidence, and generates security reports.
 
 ## Core Principles
 
-- **Analyst-Support System:** Human analysts remain responsible for reviewing and approving security decisions.
+- **AI-Driven Analysis Pipeline:** Ingestion, normalization, correlation, deduplication, severity/risk assessment, prioritization, explanation, and reporting run automatically; no human-approval step is required to operate the platform.
 - **Evidence-Grounded AI:** AI explains deterministic scanner evidence; it does not originate findings or alter canonical severity.
+- **Research Evaluation Only:** Human experts participate only during research evaluation, to establish ground truth and measure accuracy, reliability, and reproducibility — never as a required operational step.
 - **Strict Authorization:** Mandatory proof of authorization prior to scanning.
 - **Defense in Depth:** Egress-restricted ephemeral sandbox scan runtime.
 

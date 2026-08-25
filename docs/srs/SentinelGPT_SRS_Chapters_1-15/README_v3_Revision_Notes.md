@@ -1,11 +1,11 @@
 # SentinelGPT SRS v3 — Revision Notes
 
 ## Purpose
-This revision incorporates the latest research-direction corrections: SentinelGPT is positioned as a human-supervised vulnerability-intelligence and analysis pipeline rather than an autonomous pentesting agent.
+This revision incorporates the latest research-direction corrections: SentinelGPT is positioned as an AI-powered vulnerability-analysis platform in which the AI is the primary analytical component, not an autonomous pentesting agent. The pipeline operates automatically; human experts participate only in research evaluation to establish ground truth and measure accuracy/reliability.
 
 ## Major changes
 1. **Primary research contribution clarified:** multi-tool observation normalization, finding correlation/deduplication, and contextual prioritization; analyst efficiency and grounded explanation are evaluation outcomes.
-2. **Observation layer introduced:** raw scanner output → normalized observations → candidate findings → correlation → prioritization → AI explanation → human verification.
+2. **Observation layer introduced:** raw scanner output → normalized observations → candidate findings → correlation → prioritization → AI explanation → reporting; no human-approval step exists in the operational pipeline (human review appears only in evaluation).
 3. **Ground truth and baselines added:** individual scanner, rule-based aggregation, and SentinelGPT-assisted conditions; controlled/seeded test cases required for defensible evaluation.
 4. **AI boundary reinforced:** Gemini interprets evidence and explains deterministic results; it does not originate findings, merge findings, or overwrite canonical severity.
 5. **Contextual risk score reframed:** any weighted score is a transparent, versioned baseline—not a universal security truth and not an opaque LLM score.
