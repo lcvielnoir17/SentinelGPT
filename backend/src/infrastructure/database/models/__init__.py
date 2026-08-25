@@ -19,12 +19,14 @@ from src.infrastructure.database.models.lookup_models import (
     ScanStatus,
     SeverityLevel,
 )
+from src.infrastructure.database.models.target_models import Target
 
 __all__ = [
     "Base",
     "User",
     "Organization",
     "OrganizationMembership",
+    "Target",
     "SeverityLevel",
     "FindingCategory",
     "ScanStatus",

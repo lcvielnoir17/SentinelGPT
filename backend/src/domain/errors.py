@@ -29,3 +29,52 @@ class InvalidCredentialsError(DomainError):
     status_code = 401
     code = "UNAUTHENTICATED"
     message = "Invalid email or password."
+
+
+class ForbiddenError(DomainError):
+    """Authenticated requester lacks permission for the resource (403)."""
+
+    status_code = 403
+    code = "FORBIDDEN"
+    message = "You do not have permission to access this resource."
+
+
+class NotFoundError(DomainError):
+    """Resource does not exist or is not visible to the requester (404).
+
+    Per SRS Chapter 5, Section 14, cross-tenant resources are reported as
+    NOT_FOUND (never FORBIDDEN) so the API leaks no information about other
+    organizations' data.
+    """
+
+    status_code = 404
+    code = "NOT_FOUND"
+    message = "Resource not found."
+
+
+class DuplicateTargetError(DomainError):
+    """Target already registered for the owning entity (409 CONFLICT)."""
+
+    status_code = 409
+    code = "CONFLICT"
+    message = "A target with this URL is already registered for this owner."
+
+
+class InvalidTargetError(DomainError):
+    """Hostname/URL failed normalization/validation rules (422).
+
+    Covers SSRF-prevention rejections (private ranges, localhost, cloud
+    metadata) per SRS Chapter 5, Section 4 / Chapter 2, Section 13.
+    """
+
+    status_code = 422
+    code = "UNPROCESSABLE_TARGET"
+    message = "Hostname/URL failed normalization/validation rules."
+
+
+class InvalidPaginationCursorError(DomainError):
+    """Malformed pagination cursor supplied to a list endpoint (400)."""
+
+    status_code = 400
+    code = "VALIDATION_ERROR"
+    message = "Invalid pagination cursor."
