@@ -31,6 +31,14 @@ class InvalidCredentialsError(DomainError):
     message = "Invalid email or password."
 
 
+class NotAuthenticatedError(DomainError):
+    """Request lacks valid authentication credentials (401 UNAUTHENTICATED)."""
+
+    status_code = 401
+    code = "UNAUTHENTICATED"
+    message = "Authentication required."
+
+
 class ForbiddenError(DomainError):
     """Authenticated requester lacks permission for the resource (403)."""
 
@@ -78,3 +86,12 @@ class InvalidPaginationCursorError(DomainError):
     status_code = 400
     code = "VALIDATION_ERROR"
     message = "Invalid pagination cursor."
+
+
+class RefreshCsrfHeaderMissingError(DomainError):
+    """/auth/refresh or /auth/logout called without the CSRF-mitigation
+    header that only same-origin JavaScript can set (403, Chapter 2 §9)."""
+
+    status_code = 403
+    code = "FORBIDDEN"
+    message = "Missing required X-Refresh-Request header."

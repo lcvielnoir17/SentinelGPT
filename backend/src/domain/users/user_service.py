@@ -72,3 +72,10 @@ class UserService:
         if user is None or not verify_password(user.password_hash, password) or not user.is_active:
             raise InvalidCredentialsError()
         return UserAccount(id=user.id, email=user.email, created_at=user.created_at)
+
+    async def get_account(self, user_id: uuid.UUID) -> UserAccount | None:
+        """Load an account by id (used post-rotation to build the response)."""
+        user = await self._repository.get_by_id(user_id)
+        if user is None:
+            return None
+        return UserAccount(id=user.id, email=user.email, created_at=user.created_at)

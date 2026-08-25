@@ -3,6 +3,10 @@
 # API Constants
 API_V1_STR: str = "/api/v1"
 
+# Authentication cookies (SRS Chapter 2, Section 9 invariants): HttpOnly;
+# Secure; SameSite=Strict. The access cookie is issued by /auth/login.
+ACCESS_TOKEN_COOKIE: str = "accessToken"
+
 # Environment Names
 ENV_LOCAL: str = "local"
 ENV_TEST: str = "test"

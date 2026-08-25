@@ -1,14 +1,12 @@
 """Authentication & session endpoints (SRS Chapter 5, Section 2).
 
-PHASE 0 STUBS — intentionally temporary behavior, clearly marked:
-* ``/auth/register`` creates a real user row (Argon2id hash).
-* ``/auth/login`` performs real credential verification against the database.
-* NO tokens are issued and no cookies are set. Per the v3 invariant
-  (Chapter 2, Section 9) tokens will be delivered exclusively via
-  HttpOnly/Secure/SameSite=Strict cookies in Phase 1; until then the client
-  only learns *that* credentials were valid (``user`` + ``expiresIn``), never
-  any credential material. MFA challenge branch, refresh rotation, lockout,
-  and audit logging are Phase 1 deliverables.
+``/auth/register`` creates real Argon2id-hashed accounts and ``/auth/login``
+verifies credentials server-side, issuing the short-lived signed access JWT
+exactly as the v3 invariant (Chapter 2, Section 9) prescribes: delivered ONLY
+as an HttpOnly; Secure; SameSite=Strict cookie — no token material ever
+appears in the JSON body. MFA, lockout, audit logging, and the refresh-token
+session layer are subsequent Phase 1 deliverables and are intentionally
+absent here.
 """
 
 from __future__ import annotations
@@ -17,11 +15,13 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.dependencies import ACCESS_TOKEN_COOKIE
 from src.config.settings import get_settings
+from src.domain.users.token_service import create_access_token
 from src.domain.users.user_service import UserAccount, UserService
 from src.infrastructure.database.connection import get_db_session
 
@@ -70,13 +70,14 @@ class UserInfo(BaseModel):
 class LoginResponse(BaseModel):
     """200 response: { user, expiresIn } per the SRS contract.
 
-    PHASE 0: contains deliberately no token material of any kind.
+    The JSON body contains deliberately no token material of any kind — the
+    access token travels exclusively in the HttpOnly cookie.
     """
 
     user: UserInfo
     expires_in: int = Field(
         serialization_alias="expiresIn",
-        description="Access-token lifetime in seconds once Phase 1 issues cookies.",
+        description="Access-token lifetime in seconds.",
     )
 
 
@@ -102,16 +103,32 @@ async def register(payload: RegisterRequest, session: SessionDep) -> UserCreated
     response_model=LoginResponse,
     summary="Authenticate and receive session confirmation",
     description=(
-        "Verifies credentials server-side. PHASE 0: confirms validity only — "
-        "HttpOnly cookie token issuance arrives with the Phase 1 Auth Service."
+        "Verifies credentials server-side and issues the access token as an "
+        "HttpOnly; Secure; SameSite=Strict cookie (Chapter 2, Section 9)."
     ),
 )
-async def login(payload: LoginRequest, session: SessionDep) -> LoginResponse:
+async def login(payload: LoginRequest, session: SessionDep, response: Response) -> LoginResponse:
     service = UserService(session)
     settings = get_settings()
     # Unknown-email and wrong-password raise the identical InvalidCredentialsError
     # (401 UNAUTHENTICATED) — no user-enumeration oracle (Chapter 5, Section 2).
     account = await service.authenticate(payload.email, payload.password)
+    token = create_access_token(
+        user_id=account.id,
+        secret_key=settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+        expires_in_minutes=settings.access_token_expire_minutes,
+    )
+    # Chapter 2, Section 9 invariant: HttpOnly; Secure; SameSite=Strict.
+    response.set_cookie(
+        key=ACCESS_TOKEN_COOKIE,
+        value=token,
+        max_age=settings.access_token_expire_minutes * 60,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        path="/",
+    )
     return LoginResponse(
         user=_to_user_info(account),
         expires_in=settings.access_token_expire_minutes * 60,
