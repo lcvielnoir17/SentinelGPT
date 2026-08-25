@@ -62,6 +62,9 @@ class DockerSandboxConfig:
     docker_bin: str = "docker"
     resource_prefix: str = "sgpt-sbx"
     exec_timeout_s: float = 30.0
+    # Container/network creation can be slow on a cold or busy daemon;
+    # a generous ceiling here only delays fail-closed, never bypasses it.
+    create_timeout_s: float = 120.0
     startup_timeout_s: float = 20.0
     # Existing networks the sandbox container additionally joins (e.g. a
     # test fixture's seeded-target network). Egress remains constrained by
@@ -86,6 +89,9 @@ class DockerEgressSandbox:
         self._run_command: DockerCommandRunner = command_runner or _default_runner
         self._network: str | None = None
         self._container: str | None = None
+        # Name chosen BEFORE creation so a client-side timeout (where the
+        # daemon may still have created the resource) can be reaped.
+        self._pending_container: str | None = None
         self._is_established = False
         self._verification: SandboxVerification | None = None
 
@@ -166,6 +172,11 @@ class DockerEgressSandbox:
     def destroy(self) -> None:
         """Tear down all resources. Idempotent; never marks established."""
         self._is_established = False
+        if self._pending_container is not None:
+            # A timed-out create may still have materialized daemon-side;
+            # reap it by its pre-chosen name so nothing orphans.
+            self._best_effort(["rm", "-f", self._pending_container])
+            self._pending_container = None
         if self._container is not None:
             self._best_effort(["rm", "-f", self._container])
             self._container = None
@@ -199,7 +210,10 @@ class DockerEgressSandbox:
 
     def _create_network(self) -> None:
         name = f"{self._config.resource_prefix}-{uuid.uuid4().hex[:12]}"
-        result = self._docker_or_setup_failed(["network", "create", "--driver", "bridge", name])
+        result = self._docker_with_timeout(
+            self._config.create_timeout_s,
+            ["network", "create", "--driver", "bridge", name],
+        )
         if result.returncode != 0:
             self.destroy()
             raise SandboxSetupFailedError(f"network create failed: {result.stderr.strip()}")
@@ -208,7 +222,9 @@ class DockerEgressSandbox:
     def _create_container(self) -> None:
         assert self._network is not None
         name = f"{self._config.resource_prefix}-{uuid.uuid4().hex[:12]}"
-        result = self._docker_or_setup_failed(
+        self._pending_container = name
+        result = self._docker_with_timeout(
+            self._config.create_timeout_s,
             [
                 "run",
                 "-d",
@@ -221,14 +237,17 @@ class DockerEgressSandbox:
                 self._config.image,
                 "sleep",
                 "infinity",
-            ]
+            ],
         )
         if result.returncode != 0:
             self.destroy()
             raise SandboxSetupFailedError(f"container start failed: {result.stderr.strip()}")
+        self._pending_container = None
         self._container = name
         for extra in self._config.extra_networks:
-            attached = self._docker_or_setup_failed(["network", "connect", extra, name])
+            attached = self._docker_with_timeout(
+                self._config.create_timeout_s, ["network", "connect", extra, name]
+            )
             if attached.returncode != 0:
                 raise SandboxSetupFailedError(
                     f"joining network {extra} failed: {attached.stderr.strip()}"
@@ -308,6 +327,15 @@ class DockerEgressSandbox:
 
     def _docker(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return self._run_command(self._argv(args), self._config.exec_timeout_s)
+
+    def _docker_with_timeout(
+        self, timeout_s: float, args: Sequence[str]
+    ) -> subprocess.CompletedProcess[str]:
+        """Docker call with an explicit ceiling (slow-create tolerance)."""
+        try:
+            return self._run_command(self._argv(args), timeout_s)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise SandboxSetupFailedError(f"cannot invoke docker: {exc}") from exc
 
     def _docker_or_unavailable(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
         try:

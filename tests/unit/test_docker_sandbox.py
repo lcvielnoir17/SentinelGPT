@@ -168,6 +168,31 @@ def test_container_start_failure_cleans_up_and_fails_closed() -> None:
     assert not sandbox.established
 
 
+def test_client_timeout_during_create_reaps_daemon_side_orphan() -> None:
+    """If `docker run` times out client-side, the name was pre-chosen so the
+    possibly-created container is still removed (no orphans)."""
+
+    class TimedOut(ScriptedDocker):
+        def __call__(self, argv: list[str], _timeout: float) -> subprocess.CompletedProcess[str]:
+            self.calls.append(argv)
+            if tuple(argv[1:3]) == ("run", "-d"):
+                raise subprocess.TimeoutExpired(argv, timeout=120)
+            return super().__call__(argv, _timeout)
+
+    script = TimedOut()
+    script.queue(("image", "inspect"), script.ok())
+    script.queue(("network", "create"), script.ok())
+    sandbox = _sandbox(script)
+
+    with pytest.raises(SandboxSetupFailedError, match="cannot invoke docker"):
+        sandbox.establish()
+
+    assert not sandbox.established
+    rm_targets = [c[3] for c in script.calls if c[1:3] == ["rm", "-f"]]
+    assert any(name.startswith("sgpt-sbx-") for name in rm_targets)
+    assert script.invoked("network", "rm")
+
+
 def test_rule_install_failure_destroys_and_raises_setup_failed() -> None:
     script = ScriptedDocker()
     script.queue(("image", "inspect"), script.ok())
