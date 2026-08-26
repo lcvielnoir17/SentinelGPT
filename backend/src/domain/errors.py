@@ -193,3 +193,24 @@ class SandboxNotEstablishedError(DomainError):
     status_code = 503
     code = "SANDBOX_NOT_ESTABLISHED"
     message = "Scan sandbox is not established."
+
+
+class AttestationNotConfirmedError(DomainError):
+    """Scan creation/execution blocked: no valid authorization attestation.
+
+    SRS Chapter 5, Section 6 / Chapter 4, Section 8 (403
+    ATTESTATION_NOT_CONFIRMED). Target registration alone never authorizes
+    network execution.
+    """
+
+    status_code = 403
+    code = "ATTESTATION_NOT_CONFIRMED"
+    message = "Target does not have a confirmed authorization attestation."
+
+
+class InvalidScanStateError(DomainError):
+    """A lifecycle transition violated the scan state machine (409)."""
+
+    status_code = 409
+    code = "SCAN_INVALID_STATE"
+    message = "Requested operation is not valid for the current scan state."
