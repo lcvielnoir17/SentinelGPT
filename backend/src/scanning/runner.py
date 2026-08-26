@@ -22,7 +22,6 @@ real engines arrive only after this gate is deliberately opened.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from src.domain.errors import ScannerExecutionBlockedError
@@ -37,7 +36,7 @@ from src.scanning.sandbox.base import (
 from src.scanning.sandbox.policy import SandboxEgressPolicy
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from datetime import datetime
     from uuid import UUID
 
