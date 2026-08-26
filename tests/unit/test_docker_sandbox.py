@@ -91,6 +91,9 @@ def _script_happy_path(script: ScriptedDocker) -> None:
     script.queue(("exec",), script.ok())  # v6 rule installation sh -c ...
     script.queue(("exec",), script.ok(stdout=RULE_DUMP_OK + "\n"))  # v4 dump
     script.queue(("exec",), script.ok(stdout=RULE_DUMP_V6_OK + "\n"))  # v6 dump
+    # Privilege-drop verification: identity probe then capability probe.
+    script.queue(("exec",), script.ok(stdout="65534\n"))  # id -u
+    script.queue(("exec",), script.fail(stderr="Permission denied"))  # iptables
 
 
 def test_establish_verify_run_destroy_happy_path() -> None:
@@ -107,13 +110,16 @@ def test_establish_verify_run_destroy_happy_path() -> None:
     require_established(sandbox)
     assert verification.default_drop
     assert verification.allowed_addresses == frozenset({TARGET})
+    assert verification.workload_uid == 65534
     assert any("-P OUTPUT DROP" in line for line in verification.rule_dump)
 
-    exec_probe = ("exec", sandbox_container_name(script))
-    script.queue(exec_probe, script.ok(stdout="probe-ok\n"))
+    # Workload execs carry the -u prefix now; match FIFO on the exec verb.
+    script.queue(("exec",), script.ok(stdout="probe-ok\n"))
     result = sandbox.run(["python", "-c", "print('probe-ok')"])
     assert result.succeeded
     assert result.stdout.strip() == "probe-ok"
+    # Workload execs are dropped to the unprivileged UID.
+    assert any(call[1:4] == ["exec", "-u", "65534"] for call in script.calls)
 
     sandbox.destroy()
     assert not sandbox.established
@@ -166,6 +172,79 @@ def test_container_start_failure_cleans_up_and_fails_closed() -> None:
         sandbox.establish()
 
     assert not sandbox.established
+
+
+def test_privilege_drop_identity_mismatch_fails_closed() -> None:
+    """If the workload is NOT the configured UID, establishment fails."""
+    script = ScriptedDocker()
+    script.queue(("image", "inspect"), script.ok())
+    script.queue(("network", "create"), script.ok())
+    script.queue(("run", "-d"), script.ok(stdout="cid\n"))
+    script.queue(("inspect",), script.ok(stdout="true\n"))
+    script.queue(("exec",), script.ok())  # v4 install
+    script.queue(("exec",), script.ok())  # v6 install
+    script.queue(("exec",), script.ok(stdout=RULE_DUMP_OK + "\n"))
+    script.queue(("exec",), script.ok(stdout=RULE_DUMP_V6_OK + "\n"))
+    script.queue(("exec",), script.ok(stdout="0\n"))  # id -u says ROOT
+    sandbox = _sandbox(script)
+
+    with pytest.raises(SandboxVerificationFailedError, match="did not drop to uid"):
+        sandbox.establish()
+
+    assert not sandbox.established
+    assert script.invoked("rm", "-f")
+
+
+def test_privileged_workload_capability_probe_fails_closed() -> None:
+    """A workload that can still read netfilter means the drop failed."""
+    script = ScriptedDocker()
+    script.queue(("image", "inspect"), script.ok())
+    script.queue(("network", "create"), script.ok())
+    script.queue(("run", "-d"), script.ok(stdout="cid\n"))
+    script.queue(("inspect",), script.ok(stdout="true\n"))
+    script.queue(("exec",), script.ok())  # v4 install
+    script.queue(("exec",), script.ok())  # v6 install
+    script.queue(("exec",), script.ok(stdout=RULE_DUMP_OK + "\n"))
+    script.queue(("exec",), script.ok(stdout=RULE_DUMP_V6_OK + "\n"))
+    script.queue(("exec",), script.ok(stdout="65534\n"))  # identity OK...
+    script.queue(("exec",), script.ok(stdout=RULE_DUMP_OK + "\n"))  # ...but iptables READ SUCCEEDS
+    sandbox = _sandbox(script)
+
+    with pytest.raises(SandboxVerificationFailedError, match="capability"):
+        sandbox.establish()
+
+    assert not sandbox.established
+    assert script.invoked("rm", "-f")
+
+
+def test_workload_uid_none_skips_drop_probes() -> None:
+    script = ScriptedDocker()
+    script.queue(("image", "inspect"), script.ok())
+    script.queue(("network", "create"), script.ok())
+    script.queue(("run", "-d"), script.ok(stdout="cid\n"))
+    script.queue(("inspect",), script.ok(stdout="true\n"))
+    script.queue(("exec",), script.ok())  # v4 install
+    script.queue(("exec",), script.ok())  # v6 install
+    script.queue(("exec",), script.ok(stdout=RULE_DUMP_OK + "\n"))
+    script.queue(("exec",), script.ok(stdout=RULE_DUMP_V6_OK + "\n"))
+
+    binding = ValidatedTargetBinding.create(
+        hostname="target.example",
+        addresses=(TARGET,),
+        validate=lambda _a: None,
+    )
+    sandbox = DockerEgressSandbox(
+        SandboxEgressPolicy.for_binding(binding),
+        config=DockerSandboxConfig(check_docker_binary=False, workload_uid=None),
+        command_runner=script,
+    )
+
+    verification = sandbox.establish()
+    assert verification.workload_uid is None
+    assert sandbox.established
+
+    sandbox.run(["echo", "hi"])
+    assert not any(call[1:3] == ["exec", "-u"] for call in script.calls)
 
 
 def test_client_timeout_during_create_reaps_daemon_side_orphan() -> None:

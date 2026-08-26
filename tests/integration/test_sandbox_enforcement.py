@@ -86,6 +86,50 @@ def test_verification_receipt_shows_drop_on_both_families(seeded_targets, make_s
     assert dump.count("-P OUTPUT DROP") == 2
 
 
+def test_workload_runs_unprivileged_and_cannot_touch_firewall(seeded_targets, make_sandbox) -> None:
+    """After establishment the workload has zero effective capabilities and
+    netfilter is read/mutation-proof for it — while enforcement persists."""
+    sandbox = make_sandbox(seeded_targets.auth_ip)
+    receipt = sandbox.establish()
+    assert receipt.workload_uid == 65534
+
+    caps = sandbox.run(["sh", "-c", "grep CapEff /proc/self/status"])
+    assert caps.exit_code == 0
+    assert "0000000000000000" in caps.stdout, caps.stdout
+
+    before = "\n".join(sandbox.verify().rule_dump)
+
+    read_attempt = sandbox.run(["iptables", "-w", "-S", "OUTPUT"])
+    assert read_attempt.exit_code != 0, "unprivileged workload read netfilter"
+
+    mutate_attempt = sandbox.run(
+        [
+            "iptables",
+            "-w",
+            "-A",
+            "OUTPUT",
+            "-d",
+            "192.0.2.1/32",
+            "-j",
+            "ACCEPT",
+        ]
+    )
+    assert mutate_attempt.exit_code != 0, (
+        "unprivileged workload MODIFIED the firewall — privilege drop FAILED"
+    )
+
+    flush_attempt = sandbox.run(["iptables", "-w", "-F", "OUTPUT"])
+    assert flush_attempt.exit_code != 0, "unprivileged workload FLUSHED OUTPUT"
+
+    # Kernel policy is untouched by every attempt above and still authoritative.
+    after = sandbox.verify().rule_dump
+    assert "\n".join(after) == before
+    still_ok = _connect(sandbox, str(seeded_targets.auth_ip), 9999)
+    assert still_ok.exit_code == 0
+    still_denied = _connect(sandbox, str(seeded_targets.private_ip), 9999)
+    assert still_denied.exit_code != 0
+
+
 def test_redirect_escape_is_blocked_in_domain_and_runtime(seeded_targets, make_sandbox) -> None:
     """A redirect toward the private peer cannot escape — at either layer.
 

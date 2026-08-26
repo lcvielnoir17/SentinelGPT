@@ -52,6 +52,8 @@ class SandboxVerification:
     rule_dump: tuple[str, ...]
     default_drop: bool
     allowed_addresses: frozenset[IPAddress]
+    # UID workloads run as after establishment (None = not dropped).
+    workload_uid: int | None = None
 
 
 @runtime_checkable

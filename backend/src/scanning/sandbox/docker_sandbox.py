@@ -66,6 +66,13 @@ class DockerSandboxConfig:
     # a generous ceiling here only delays fail-closed, never bypasses it.
     create_timeout_s: float = 120.0
     startup_timeout_s: float = 20.0
+    # UID all WORKLOAD commands run as (``docker exec -u``). Rules are
+    # installed and verified as root during establishment; afterwards every
+    # exec drops to this unprivileged identity. Empirically verified: Docker
+    # sets no ambient capabilities, so a non-root exec yields CapEff=0 —
+    # CAP_NET_ADMIN is unavailable to workloads and iptables mutation fails
+    # with EPERM while the kernel firewall stays authoritative.
+    workload_uid: int | None = 65534
     # Existing networks the sandbox container additionally joins (e.g. a
     # test fixture's seeded-target network). Egress remains constrained by
     # the OUTPUT chain on every attached interface.
@@ -117,6 +124,7 @@ class DockerEgressSandbox:
             self._create_container()
             self._install_egress_rules()
             verification = self.verify()
+            self._verify_privilege_drop()
         except Exception:
             self._is_established = False
             self._destroy_quietly()
@@ -141,16 +149,49 @@ class DockerEgressSandbox:
             rule_dump=tuple(dump),
             default_drop=True,
             allowed_addresses=frozenset(self._policy.allowed_addresses),
+            workload_uid=self._config.workload_uid,
         )
 
-    def run(self, argv: Sequence[str]) -> ExecResult:
-        """Execute one command inside the sandbox (the only exec path)."""
-        if not self._is_established or self._container is None:
-            raise SandboxUnavailableError("sandbox is not established")
+    def _verify_privilege_drop(self) -> None:
+        """Prove workloads are unprivileged BEFORE the sandbox counts as up.
+
+        Fail-closed: establishment only succeeds when (a) execs run as the
+        configured UID and (b) that identity CANNOT read or mutate netfilter.
+        The kernel keeps enforcing the installed OUTPUT rules regardless —
+        capabilities govern rule CHANGES, never packet filtering itself.
+        """
+        if self._config.workload_uid is None:
+            return  # explicit opt-out for exotic images; documented gap
+        identity = self._exec(["id", "-u"])
+        if not identity.succeeded or identity.stdout.strip() != str(self._config.workload_uid):
+            self._is_established = False
+            self.destroy()
+            raise SandboxVerificationFailedError(
+                f"workload did not drop to uid {self._config.workload_uid}: "
+                f"got {identity.stdout.strip()!r} (exit {identity.exit_code})"
+            )
+        mutation_probe = self._exec(["iptables", "-w", "-S", "OUTPUT"])
+        if mutation_probe.succeeded:
+            self._is_established = False
+            self.destroy()
+            raise SandboxVerificationFailedError(
+                "unprivileged workload could read netfilter; capability "
+                "drop is not effective on this runtime"
+            )
+
+    def _exec_argv(self, argv: Sequence[str]) -> list[str]:
+        base = ["exec"]
+        if self._config.workload_uid is not None:
+            base += ["-u", str(self._config.workload_uid)]
+        assert self._container is not None
+        return [self._config.docker_bin, *base, self._container, *argv]
+
+    def _exec(self, argv: Sequence[str]) -> ExecResult:
+        """Ungated exec used by establishment-time probes only."""
+        assert self._container is not None
         started = time.monotonic()
-        args = [self._config.docker_bin, "exec", self._container, *argv]
         try:
-            completed = self._run_command(args, self._config.exec_timeout_s)
+            completed = self._run_command(self._exec_argv(argv), self._config.exec_timeout_s)
         except subprocess.TimeoutExpired:
             duration = time.monotonic() - started
             return ExecResult(
@@ -168,6 +209,12 @@ class DockerEgressSandbox:
             stderr=completed.stderr,
             duration_s=duration,
         )
+
+    def run(self, argv: Sequence[str]) -> ExecResult:
+        """Execute one command inside the sandbox (the only exec path)."""
+        if not self._is_established or self._container is None:
+            raise SandboxUnavailableError("sandbox is not established")
+        return self._exec(argv)
 
     def destroy(self) -> None:
         """Tear down all resources. Idempotent; never marks established."""
