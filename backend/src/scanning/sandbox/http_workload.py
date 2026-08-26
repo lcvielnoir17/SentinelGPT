@@ -143,7 +143,11 @@ def main(argv: list[str]) -> int:
                     chunks.append(chunk)
                 body_out = b"".join(chunks)
                 status = response.status_code
-                resp_headers = [[str(k), str(v)] for k, v in response.headers.items()]
+                # .raw preserves DUPLICATE headers (critical for multiple
+                # Set-Cookie lines); .items() would comma-merge them.
+                resp_headers = [
+                    [k.decode("latin-1"), v.decode("latin-1")] for k, v in response.headers.raw
+                ]
             finally:
                 response.close()
     except Exception as exc:  # noqa: BLE001 - mapped onto taxonomy below

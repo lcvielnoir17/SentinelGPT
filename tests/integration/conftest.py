@@ -232,6 +232,16 @@ class H(BaseHTTPRequestHandler):
             self._json(200, {"sni": SNI_SEEN["value"]})
         elif p == "/redirect-rel":
             self.send_response(302); self.send_header("Location", "/final"); self.end_headers()
+        elif p == "/cookies":
+            self.send_response(200)
+            self.send_header("Set-Cookie", "good_ck=v1; Secure; HttpOnly; SameSite=Strict")
+            self.send_header("Set-Cookie", "nossl_ck=SECRETVALUE2; HttpOnly; SameSite=Lax")
+            self.send_header("Set-Cookie", "nohttp_ck=SECRETVALUE3; Secure; SameSite=Lax")
+            self.send_header("Set-Cookie", "nosite_ck=SECRETVALUE4; Secure; HttpOnly")
+            self.send_header("Set-Cookie", "badsite_ck=SECRETVALUE5; Secure; HttpOnly; SameSite=gibberish")
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"ok")
         elif p == "/final":
             self._json(200, {"path": p})
         elif p == "/redirect-abs":

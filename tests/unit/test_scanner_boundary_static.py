@@ -141,6 +141,41 @@ def test_sandbox_zone_has_no_direct_network_capability() -> None:
     assert not violations, "Sandbox zone gained forbidden capability:\n" + "\n".join(violations)
 
 
+ENGINE_ZONE_PREFIXES = ("scanning/engines",)
+# Engines must consume ONLY the approved HttpClient/EngineServices seam.
+ENGINE_ZONE_FORBIDDEN = tuple(
+    set(DEFAULT_FORBIDDEN)
+    | {
+        "import httpx",
+        "from httpx",
+        "import docker",
+        "from docker",
+        "urllib.parse",
+        "urllib.",
+    }
+)
+
+
+def test_engine_zone_consumes_only_approved_abstractions() -> None:
+    """Engine packages stay network/process/DNS-inert by source inspection."""
+    engine_files = [
+        path
+        for path in _iter_source_files()
+        if _zone_for(path.as_posix().replace("backend/src/", "", 1)).startswith(
+            ("scanning/engines",)
+        )
+        or path.as_posix().replace("backend/src/", "", 1).startswith(ENGINE_ZONE_PREFIXES)
+    ]
+    assert engine_files, "engine zone went missing; guard covers nothing"
+    violations: list[str] = []
+    for path in engine_files:
+        text = path.read_text(encoding="utf-8")
+        for token in ENGINE_ZONE_FORBIDDEN:
+            if token in text:
+                violations.append(f"{path}: contains {token!r}")
+    assert not violations, "Engine zone gained unapproved capability:\n" + "\n".join(violations)
+
+
 def test_boundary_packages_exist_and_remain_guarded() -> None:
     for required in (
         SRC_ROOT / "domain" / "scanning",
