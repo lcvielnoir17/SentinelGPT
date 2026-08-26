@@ -27,16 +27,15 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from src.domain.errors import ScannerExecutionBlockedError
 from src.domain.scanning.egress import ScanNetworkContext
 from src.scanning.engines.base import require_scan_context
+from src.scanning.engines.services import EngineServices, default_engine_services
 from src.scanning.sandbox.base import (
     EgressSandbox,
-    ExecResult,
     SandboxFactory,
     require_established,
 )
 from src.scanning.sandbox.policy import SandboxEgressPolicy
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
     from datetime import datetime
     from uuid import UUID
 
@@ -46,14 +45,18 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class SandboxAwareEngine(Protocol):
-    """Contract for FUTURE engines: context plus the sandbox exec path."""
+    """Contract for FUTURE engines: validated context + scoped services.
+
+    Engines receive NO raw networking: only the context and an
+    :class:`EngineServices` bundle whose HTTP factory is bound to that same
+    context (ADR-0005). Anything beyond must be a reviewed contract change.
+    """
 
     name: str
 
     def execute(
-        self, context: ScanNetworkContext, runner: Callable[[Sequence[str]], ExecResult]
-    ) -> None:  # pragma: no cover - interface only until a real engine lands
-        ...
+        self, context: ScanNetworkContext, services: EngineServices
+    ) -> None: ...  # pragma: no cover - interface only until a real engine lands
 
 
 class SandboxedScanExecutor:
@@ -102,7 +105,8 @@ class SandboxedScanExecutor:
                 # a fully verified sandbox does not open the execution gate;
                 # that opening is a deliberate, reviewed act (ADR-0003).
                 raise ScannerExecutionBlockedError()
-            engine.execute(context, runner=sandbox.run)
+            services = default_engine_services(context)
+            engine.execute(context, services)
         finally:
             sandbox.destroy()
 

@@ -111,8 +111,8 @@ class RecordingEngine:
     def __init__(self) -> None:
         self.calls: list[tuple[object, object]] = []
 
-    def execute(self, context, runner) -> None:  # type: ignore[no-untyped-def]
-        self.calls.append((context, runner))
+    def execute(self, context, services) -> None:  # type: ignore[no-untyped-def]
+        self.calls.append((context, services))
 
 
 def test_engine_runs_inside_established_sandbox_and_cleanup_happens() -> None:
@@ -125,17 +125,36 @@ def test_engine_runs_inside_established_sandbox_and_cleanup_happens() -> None:
     (sandbox,) = made
     assert sandbox.events[-1] == "destroy"
     assert sandbox.events.count("establish") == 1
-    (context, runner) = engine.calls[0]
+
+    (context, services) = engine.calls[0]
     assert [str(a) for a in context.binding.addresses] == [AUTH_IP]  # type: ignore[attr-defined]
-    # The runner handed to the engine is the sandbox's own exec path.
-    result = runner(["echo", "hi"])  # type: ignore[operator]
-    assert result.exit_code == 0
+    # Services are bound to THIS context and start uncancelled.
+    assert services.context is context  # type: ignore[attr-defined]
+    assert services.cancellation.cancelled is False  # type: ignore[attr-defined]
+    assert services.limits.max_redirects == 10  # type: ignore[attr-defined]
+
+
+def test_engine_services_expose_no_transport_until_phase_four() -> None:
+    """The capability bundle must not leak a working network path yet."""
+    from src.domain.scanning.http_contract import (
+        ControlledTransportError,
+        TransportFailureKind,
+    )
+
+    engine = RecordingEngine()
+    executor, _made = _executor()
+    executor.execute_scan("target.example", engine=engine)  # type: ignore[arg-type]
+
+    (_context, services) = engine.calls[0]
+    with pytest.raises(ControlledTransportError) as err:
+        services.http_client_factory()  # type: ignore[attr-defined]
+    assert err.value.kind is TransportFailureKind.PROTOCOL_ERROR
 
 
 def test_engine_failure_still_destroys_sandbox() -> None:
     class ExplodingEngine(RecordingEngine):
-        def execute(self, context, runner) -> None:  # type: ignore[no-untyped-def]
-            super().execute(context, runner)
+        def execute(self, context, services) -> None:  # type: ignore[no-untyped-def]
+            super().execute(context, services)
             raise RuntimeError("engine exploded")
 
     executor, made = _executor()
