@@ -67,6 +67,9 @@ class AttestationService:
         self._attestations = AttestationRepository(session)
         self._targets = TargetRepository(session)
         self._memberships = MembershipRepository(session)
+        from src.domain.audit.audit_service import AuditService
+
+        self._audit = AuditService(session)
 
     async def create_self_attestation(
         self,
@@ -76,7 +79,7 @@ class AttestationService:
         evidence_file_ref: str | None = None,
     ) -> AttestationDetails:
         """Submit + auto-confirm a SELF_ATTESTATION for a visible target."""
-        await self._require_visible_target(target_id)
+        target = await self._require_visible_target(target_id)
 
         attestation = AuthorizationAttestation(
             target_id=target_id,
@@ -88,6 +91,21 @@ class AttestationService:
         )
         self._attestations.add(attestation)
         await self._attestations.flush()
+        await self._audit.record(
+            action_code="ATTESTATION_CONFIRMED",
+            entity_type="authorization_attestation",
+            entity_id=attestation.id,
+            metadata_json={
+                "method": self.SELF_ATTESTATION_CODE,
+                "targetId": str(target_id),
+                "targetOwnerUserId": str(getattr(target, "owner_user_id", "") or ""),
+                "targetOwnerOrganizationId": str(
+                    getattr(target, "owner_organization_id", "") or ""
+                ),
+                "expiresAt": expires_at.isoformat() if expires_at else None,
+            },
+            actor_user_id=self._principal.id,
+        )
         return _to_details(attestation, self.SELF_ATTESTATION_CODE)
 
     async def list_for_target(self, target_id: uuid.UUID) -> list[AttestationDetails]:
@@ -106,6 +124,13 @@ class AttestationService:
         attestation.revoked_at = datetime.now(UTC)
         attestation.revoked_reason = reason[:1000]
         await self._attestations.flush()
+        await self._audit.record(
+            action_code="ATTESTATION_REVOKED",
+            entity_type="authorization_attestation",
+            entity_id=attestation.id,
+            metadata_json={"reason": reason[:1000]},
+            actor_user_id=self._principal.id,
+        )
         codes = await self._attestations.method_code_map()
         return _to_details(
             attestation, codes.get(attestation.method_id, self.SELF_ATTESTATION_CODE)
@@ -126,16 +151,16 @@ class AttestationService:
 
     # ------------------------------------------------------------------ #
 
-    async def _require_visible_target(self, target_id: uuid.UUID) -> None:
+    async def _require_visible_target(self, target_id: uuid.UUID) -> object:
         target = await self._targets.get_by_id(target_id)
         if target is None:
             raise NotFoundError()
         if target.owner_user_id == self._principal.id:
-            return
+            return target
         if target.owner_organization_id is not None and (
             await self._memberships.is_member(self._principal.id, target.owner_organization_id)
         ):
-            return
+            return target
         raise NotFoundError()
 
     async def _method_id(self, code: str) -> int:

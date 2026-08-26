@@ -64,13 +64,33 @@ class FakeRow:
 
 
 class FakeSession:
-    """Records commits; never touches a database."""
+    """Records commits and added objects; never touches a database."""
 
     def __init__(self) -> None:
         self.commits = 0
+        self.added: list[object] = []
+
+    def add(self, obj: object) -> None:
+        self.added.append(obj)
 
     async def commit(self) -> None:
         self.commits += 1
+
+    async def flush(self) -> None:
+        return None
+
+    async def execute(self, _stmt: object) -> None:
+        class R:
+            def scalars(self):  # type: ignore[no-untyped-def]
+                return self
+
+            def all(self):  # type: ignore[no-untyped-def]
+                return []
+
+            def first(self):  # type: ignore[no-untyped-def]
+                return None
+
+        return R()
 
 
 class FakeRepo:

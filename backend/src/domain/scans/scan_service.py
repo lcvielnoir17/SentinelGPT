@@ -148,6 +148,20 @@ class ScanService:
         )
         repository.add(scan)
         await repository.flush()
+        from src.domain.audit.audit_service import AuditService
+
+        await AuditService(self._session).record(
+            action_code="SCAN_REQUESTED",
+            entity_type="scan",
+            entity_id=scan.id,
+            metadata_json={
+                "targetId": str(target.id),
+                "scanProfile": scan_profile_code,
+                "authorizationAttestationId": str(attestation.id),
+            },
+            actor_user_id=principal.id,
+            occurred_at=now,
+        )
         return await self._details(scan)
 
     async def get_scan(self, scan_id: uuid.UUID) -> ScanDetails:
@@ -267,6 +281,19 @@ class ScanService:
             scan.authorization_attestation_id
         )
         if attestation is None or not _attestation_active(attestation):
+            from src.domain.audit.audit_service import AuditService
+
+            await AuditService(self._session).record(
+                action_code="SCAN_STATE_TRANSITION",
+                entity_type="scan",
+                entity_id=scan.id,
+                metadata_json={
+                    "from": SCAN_STATUS_QUEUED_CODE,
+                    "to": SCAN_STATUS_REJECTED_CODE,
+                    "reason": "authorization attestation no longer valid",
+                },
+                actor_user_id=None,
+            )
             executions = ScanEngineExecutionRepository(self._session)
             execution_row = await executions.create(
                 scan_id=scan.id,
@@ -306,6 +333,9 @@ class ScanService:
         await self._session.commit()
 
         loop = asyncio.get_running_loop()
+        from src.domain.audit.audit_service import AuditService as _Audit
+
+        audit = _Audit(self._session)
         try:
             analysis_result = await loop.run_in_executor(
                 None,
@@ -317,12 +347,33 @@ class ScanService:
                     path=origin["path"],
                 ),
             )
+            await audit.record(
+                action_code="SCAN_STATE_TRANSITION",
+                entity_type="scan",
+                entity_id=scan.id,
+                metadata_json={
+                    "from": SCAN_STATUS_RUNNING_CODE,
+                    "to": "EXECUTION_SUCCEEDED",
+                },
+                occurred_at=datetime.now(UTC),
+            )
         except Exception as exc:  # noqa: BLE001 - controlled lifecycle failure
             await executions.mark(
                 execution_row.id,
                 status="FAILED",
                 completed_at=datetime.now(UTC),
                 error_message=type(exc).__name__,
+            )
+            await audit.record(
+                action_code="SCAN_STATE_TRANSITION",
+                entity_type="scan",
+                entity_id=scan.id,
+                metadata_json={
+                    "from": SCAN_STATUS_RUNNING_CODE,
+                    "to": SCAN_STATUS_REJECTED_CODE,
+                    "reason": type(exc).__name__,
+                },
+                occurred_at=datetime.now(UTC),
             )
             await repository.try_transition(
                 scan.id,
