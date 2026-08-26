@@ -61,7 +61,7 @@ class ScriptedSandbox:
         self._established = False
 
 
-def _executor(*, fail_establish: bool = False):
+def _executor(*, fail_establish: bool = False, enable_execution: bool = True):
     resolver = FakeResolver({"target.example": FakeResolver.records(AUTH_IP)})
     made: list[ScriptedSandbox] = []
 
@@ -70,13 +70,33 @@ def _executor(*, fail_establish: bool = False):
         made.append(sandbox)
         return sandbox
 
-    executor = SandboxedScanExecutor(ScanTargetResolutionService(resolver), factory)  # type: ignore[arg-type]
+    executor = SandboxedScanExecutor(
+        ScanTargetResolutionService(resolver),  # type: ignore[arg-type]
+        factory,  # type: ignore[arg-type]
+        enable_execution=enable_execution,
+    )
     return executor, made
 
 
-def test_execution_still_blocked_even_with_verified_sandbox() -> None:
-    """The phase invariant: no engines exist; the final gate stays shut."""
-    executor, _ = _executor()
+def test_execution_still_blocked_by_default_even_with_engine() -> None:
+    """Gate default is CLOSED even when a real engine instance is passed."""
+    engine = RecordingEngine()
+    executor, made = _executor(enable_execution=False)
+    with pytest.raises(ScannerExecutionBlockedError):
+        executor.execute_scan("target.example", engine=engine)  # type: ignore[arg-type]
+    (sandbox,) = made
+    assert sandbox.events == ["establish", "destroy"]
+
+    hardened_default = SandboxedScanExecutor(
+        ScanTargetResolutionService(FakeResolver({})),  # type: ignore[arg-type]
+        lambda _policy: None,  # type: ignore[arg-type,return-value]
+    )
+    assert hardened_default._enable_execution is False  # noqa: SLF001 - wiring
+
+
+def test_execution_blocked_without_engine_when_enabled() -> None:
+    """enable_execution=True still requires a concrete engine instance."""
+    executor, _ = _executor(enable_execution=True)
     with pytest.raises(ScannerExecutionBlockedError):
         executor.execute_scan("target.example")
 

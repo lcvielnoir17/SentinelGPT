@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 
 ALLOWED_HTTP_SCHEMES = frozenset({"http", "https"})
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+DEFAULT_PORTS: dict[str, int] = dict(_DEFAULT_PORTS)
 
 # Headers the transport owns; caller-supplied values would let a workload
 # spoof host identity or framing and are rejected at contract level.
@@ -85,6 +86,9 @@ class HttpLimits:
     read_timeout_s: float = 15.0
     max_response_bytes: int = 2_000_000
     max_redirects: int = 10
+    # Logical requests an engine may issue per attempt. Transport-managed
+    # redirect hops count against max_redirects, not this budget.
+    max_requests: int = 4
 
     def __post_init__(self) -> None:
         positive = (
@@ -92,6 +96,7 @@ class HttpLimits:
             self.read_timeout_s,
             self.max_response_bytes,
             self.max_redirects,
+            self.max_requests,
         )
         if any(value <= 0 for value in positive):
             raise ValueError("HttpLimits values must be positive")

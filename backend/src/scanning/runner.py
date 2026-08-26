@@ -28,7 +28,7 @@ from src.domain.errors import ScannerExecutionBlockedError
 from src.domain.scanning.egress import ScanNetworkContext
 from src.domain.scanning.http_contract import HttpLimits, ScanCancellation
 from src.scanning.engines.base import require_scan_context
-from src.scanning.engines.services import EngineServices
+from src.scanning.engines.services import EngineServices, OriginSpec
 from src.scanning.sandbox.base import (
     EgressSandbox,
     SandboxFactory,
@@ -58,19 +58,30 @@ class SandboxAwareEngine(Protocol):
 
     def execute(
         self, context: ScanNetworkContext, services: EngineServices
-    ) -> None: ...  # pragma: no cover - interface only until a real engine lands
+    ) -> object: ...  # engines return their structured result  # pragma: no cover - interface only until a real engine lands
 
 
 class SandboxedScanExecutor:
-    """Runs the full security chain; refuses to reach any engine otherwise."""
+    """Runs the full security chain; refuses to reach any engine otherwise.
+
+    ``enable_execution`` is the PRODUCTION execution gate (ADR-0007): it
+    defaults to False, so even a fully implemented engine is refused until
+    an operator/review deliberately flips it at composition time. Tests
+    that must exercise a real engine end-to-end construct the executor with
+    ``enable_execution=True`` — the secure chain itself is identical in
+    both modes.
+    """
 
     def __init__(
         self,
         resolution: ScanTargetResolutionService,
         sandbox_factory: SandboxFactory,
+        *,
+        enable_execution: bool = False,
     ) -> None:
         self._resolution = resolution
         self._sandbox_factory = sandbox_factory
+        self._enable_execution = enable_execution
 
     def prepare(
         self,
@@ -97,27 +108,30 @@ class SandboxedScanExecutor:
         target_id: UUID | None = None,
         now: datetime | None = None,
         limits: HttpLimits | None = None,
-    ) -> None:
+        origin: OriginSpec | None = None,
+    ) -> object:
         """Execute the chain end-to-end for one scan attempt."""
         binding, sandbox = self.prepare(hostname, target_id=target_id, now=now)
         try:
             context = ScanNetworkContext.create(binding)
             require_scan_context(context)
-            if engine is None:
-                # Phase invariant: NO engine implementation exists yet. Even
-                # a fully verified sandbox does not open the execution gate;
-                # that opening is a deliberate, reviewed act (ADR-0003).
+            if engine is None or not self._enable_execution:
+                # Execution gate (ADR-0007): closed by default even now that
+                # a real engine exists. Opening it is an explicit, reviewed
+                # act at composition time (enable_execution=True), never a
+                # library-level default.
                 raise ScannerExecutionBlockedError()
-            services = self._build_services(context, sandbox, limits)
-            engine.execute(context, services)
+            services = self.build_services(context, sandbox, limits, origin)
+            return engine.execute(context, services)
         finally:
             sandbox.destroy()
 
-    def _build_services(
+    def build_services(
         self,
         context: ScanNetworkContext,
         sandbox: EgressSandbox,
-        limits: HttpLimits | None,
+        limits: HttpLimits | None = None,
+        origin: OriginSpec | None = None,
     ) -> EngineServices:
         """Bind per-attempt capabilities to THIS context and sandbox.
 
@@ -126,6 +140,7 @@ class SandboxedScanExecutor:
         same validated path; engines cannot construct a wider transport.
         """
         effective_limits = limits or HttpLimits()
+        effective_origin = origin or OriginSpec()
         resolution = self._resolution
 
         def factory() -> SandboxHttpClient:
@@ -135,6 +150,7 @@ class SandboxedScanExecutor:
             http_client_factory=factory,
             cancellation=ScanCancellation.create(),
             limits=effective_limits,
+            origin=effective_origin,
             _context=context,
         )
 
