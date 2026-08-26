@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import json
+import ssl
 import sys
 import time
 
@@ -46,13 +47,27 @@ def _emit_error(kind: str, detail: str) -> int:
 
 
 def _classify(exc: Exception) -> tuple[str, str]:
+    import ssl
+
     if isinstance(exc, httpx.ConnectTimeout):
         return "connect_timeout", "connect timed out"
     if isinstance(exc, httpx.ReadTimeout):
         return "read_timeout", "read timed out"
+    # Walk the FULL chained exception graph: httpx/httpcore may lose the
+    # precise SSL error depending on where the handshake fails.
+    stack: list[BaseException] = [exc]
+    seen_ids: set[int] = set()
+    while stack:
+        current = stack.pop()
+        if id(current) in seen_ids:
+            continue
+        seen_ids.add(id(current))
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return "tls_error", "certificate verification failed"
+        for chained in (current.__cause__, current.__context__):
+            if chained is not None:
+                stack.append(chained)
     cause = exc.__cause__ or exc
-    if isinstance(cause, ssl_cert_error_type()):
-        return "tls_error", "certificate verification failed"
     if isinstance(
         exc,
         (
@@ -65,12 +80,6 @@ def _classify(exc: Exception) -> tuple[str, str]:
     ):
         return "protocol_error", type(cause).__name__
     return "protocol_error", type(exc).__name__
-
-
-def ssl_cert_error_type() -> type:
-    import ssl
-
-    return ssl.SSLCertVerificationError
 
 
 def main(argv: list[str]) -> int:
@@ -89,8 +98,21 @@ def main(argv: list[str]) -> int:
 
     started = time.monotonic()
     try:
+        verify: bool | ssl.SSLContext = True
+        ca_b64 = spec.get("ca_b64")
+        if ca_b64:
+            # Scan-scoped CA pinning: an explicitly supplied test/enterprise
+            # CA is ADDED to default verification; validation itself is
+            # never disabled.
+            ca_path = "/tmp/sgpt-scan-ca.pem"
+            with open(ca_path, "wb") as fh:
+                fh.write(base64.b64decode(ca_b64))
+            ctx = ssl.create_default_context()
+            ctx.load_verify_locations(cafile=ca_path)
+            verify = ctx
+
         with httpx.Client(
-            verify=True,
+            verify=verify,
             follow_redirects=False,
             timeout=httpx.Timeout(
                 connect=float(spec["connect_timeout_s"]),

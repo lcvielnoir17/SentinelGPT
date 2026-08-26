@@ -18,7 +18,7 @@ Relative hops keep the current validated origin/pin and merge paths only.
 Pinned-IP vs logical-identity mechanism: the URL host is the pinned IP
 (IPv6 bracketed); the logical hostname rides in the ``Host`` header and in
 the ``sni_hostname`` request extension, which httpcore passes as SSL
-``server_hostname`` — driving SNI AND certificate verification against the
+``server_hostname`` â€” driving SNI AND certificate verification against the
 validated name while verification stays fully enabled.
 
 Capability note (static guard): this zone may import httpx because all
@@ -50,7 +50,7 @@ from src.domain.scanning.http_contract import (
 )
 from src.domain.scanning.redirects import RedirectValidationService
 from src.scanning.sandbox.base import ExecResult, require_established
-from src.scanning.sandbox.http_workload_loader import WORKLOAD_B64
+from src.scanning.sandbox.http_workload_loader import WORKLOAD_EXEC_CODE
 
 if TYPE_CHECKING:
     from src.domain.scanning.resolution import ScanTargetResolutionService
@@ -81,9 +81,19 @@ class SandboxHttpClient:
         self,
         sandbox: EgressSandbox,
         resolution: ScanTargetResolutionService,
+        *,
+        ca_pem: str | None = None,
     ) -> None:
+        """``ca_pem`` optionally pins one additional trusted CA for TLS.
+
+        This is scan-scoped CA PINNING for controlled environments (e.g.
+        seeded test CAs): default system verification always remains on, and
+        engines cannot supply or alter it — the value is fixed at
+        construction by the operator/executor.
+        """
         self._sandbox = sandbox
         self._resolution = resolution
+        self._ca_b64 = base64.b64encode(ca_pem.encode()).decode() if ca_pem else None
         self._redirects = RedirectValidationService(resolution)
 
     # ------------------------------------------------------------------ #
@@ -217,6 +227,7 @@ class SandboxHttpClient:
                 "read_timeout_s": min(limits.read_timeout_s, 30.0),
                 "max_response_bytes": limits.max_response_bytes,
                 "sni_hostname": request.target.hostname,
+                "ca_b64": self._ca_b64,
             },
             separators=(",", ":"),
         )
@@ -224,7 +235,9 @@ class SandboxHttpClient:
         if len(spec_b64) > _MAX_SPEC_ARGV_BYTES:
             raise ValueError("request exceeds sandbox argv budget")
 
-        result = self._sandbox.run(["python", "-I", "-c", WORKLOAD_B64, "--spec-b64", spec_b64])
+        result = self._sandbox.run(
+            ["python", "-I", "-c", WORKLOAD_EXEC_CODE, "--spec-b64", spec_b64]
+        )
         return _parse_exec_result(result, final_target=request.target)
 
 

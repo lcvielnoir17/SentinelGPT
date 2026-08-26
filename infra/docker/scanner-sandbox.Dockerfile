@@ -25,9 +25,13 @@ FROM python:3.12-slim
 
 # iptables: kernel-level egress enforcement installed by the sandbox lifecycle.
 # openssl: enables seeded TLS endpoints in local security fixtures/tests.
+# httpx (pinned): the ONLY HTTP library available inside the sandbox; the
+#   injected workload uses its sni_hostname extension for the
+#   pinned-IP vs logical-identity split (ADR-0006).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends iptables openssl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir httpx==0.28.1
 
 # Long-lived placeholder process: the sandbox lifecycle execs workload
 # commands against this container instead of managing short-lived runs.

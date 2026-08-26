@@ -34,7 +34,7 @@ in-sandbox HTTP layer is allowed to *attempt*.
 | Redirect loops | Repeat (location) within one chain ⇒ immediate block; loops therefore cannot consume unbounded time or requests. | `RedirectChain` (tested) |
 | Connect timeout | `HttpLimits.connect_timeout_s` default 5s; adapter maps expiry to `ControlledTransportError(CONNECT_TIMEOUT)`. | limits type |
 | Read timeout | `HttpLimits.read_timeout_s` default 15s between body progress; maps to READ_TIMEOUT kind. | limits type |
-| Response size | Hard clamp at `max_response_bytes` (default 2 MiB): adapters stream-count and abort with RESPONSE_TOO_LARGE; fakes already slice. | contract + fake |
+| Response size | Hard ceiling at `max_response_bytes` (default 2 MiB): adapters stream-count and CLAMP with an explicit `truncated=True` flag on the response (never unbounded memory). Redirect responses that arrive clamped are refused outright — clamped bytes must not drive routing. | contract + transport (ADR-0006) |
 
 ## Deliberately UNRESOLVED (recorded, not guessed)
 
