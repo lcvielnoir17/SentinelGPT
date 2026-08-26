@@ -20,6 +20,7 @@ checks in front of requests.
 from src.scanning.sandbox.base import (
     EgressSandbox,
     ExecResult,
+    SandboxFactory,
     SandboxVerification,
     require_established,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "EgressSandbox",
     "ExecResult",
     "SandboxEgressPolicy",
+    "SandboxFactory",
     "SandboxVerification",
     "require_established",
 ]

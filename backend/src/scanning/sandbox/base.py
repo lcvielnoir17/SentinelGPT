@@ -19,10 +19,12 @@ the documented capability exceptions in the static boundary guard.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from src.domain.errors import SandboxNotEstablishedError
+from src.scanning.sandbox.policy import SandboxEgressPolicy
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -91,3 +93,14 @@ def require_established(sandbox: EgressSandbox) -> None:
     """Gate: refuse any workload before the sandbox is proven up."""
     if not sandbox.established:
         raise SandboxNotEstablishedError()
+
+
+SandboxFactory = Callable[[SandboxEgressPolicy], EgressSandbox]
+"""THE runtime seam (ADR-0004).
+
+Scanner orchestration depends on this callable — never on a concrete
+runtime. Docker is one producer of such factories; Kubernetes/containerd
+implementations would provide their own, satisfying the SAME protocol,
+verification, and fail-closed error semantics. Nothing outside an
+infrastructure sandbox module may construct sandboxes directly.
+"""

@@ -28,7 +28,12 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from src.domain.errors import ScannerExecutionBlockedError
 from src.domain.scanning.egress import ScanNetworkContext
 from src.scanning.engines.base import require_scan_context
-from src.scanning.sandbox.base import EgressSandbox, ExecResult, require_established
+from src.scanning.sandbox.base import (
+    EgressSandbox,
+    ExecResult,
+    SandboxFactory,
+    require_established,
+)
 from src.scanning.sandbox.policy import SandboxEgressPolicy
 
 if TYPE_CHECKING:
@@ -50,9 +55,6 @@ class SandboxAwareEngine(Protocol):
         self, context: ScanNetworkContext, runner: Callable[[Sequence[str]], ExecResult]
     ) -> None:  # pragma: no cover - interface only until a real engine lands
         ...
-
-
-SandboxFactory = Callable[[SandboxEgressPolicy], EgressSandbox]
 
 
 class SandboxedScanExecutor:
