@@ -184,3 +184,77 @@ def test_boundary_packages_exist_and_remain_guarded() -> None:
         SRC_ROOT / "infrastructure" / "network",
     ):
         assert required.is_dir(), f"missing guarded boundary package: {required}"
+
+
+# --------------------------------------------------------------------- #
+# AI correlation layer (ADR-0008)                                        #
+# --------------------------------------------------------------------- #
+
+AI_DOMAIN_ZONE_PREFIXES = ("domain/scanning/analysis",)
+AI_DOMAIN_EXTRA_FORBIDDEN = (
+    "import google",
+    "from google",
+    "from src.infrastructure.ai",
+    "src.scanning.engines.services",
+    "EngineServices",
+    "SandboxFactory",
+    "SandboxEgressPolicy",
+    "HostnameResolver",
+    "ScanNetworkContext",
+)
+AI_INFRA_ZONE_PREFIXES = ("infrastructure/ai",)
+AI_INFRA_EXTRA_FORBIDDEN = (
+    "import socket",
+    "from socket",
+    "socket.",
+    "subprocess",
+    "create_subprocess",
+    "getaddrinfo",
+    "gethostbyname",
+    "import docker",
+    "from docker",
+    "import requests",
+    "from requests",
+    "import aiohttp",
+    "from aiohttp",
+    "urllib.request",
+    "urlopen(",
+    "http.client",
+)
+
+
+def _files_under(prefixes: tuple[str, ...]) -> list[pathlib.Path]:
+    return [
+        path
+        for path in _iter_source_files()
+        if path.as_posix().replace("backend/src/", "", 1).startswith(prefixes)
+    ]
+
+
+def test_ai_domain_zone_is_fully_inert_and_decoupled_from_scanner() -> None:
+    """The domain analysis package: evidence in, assessment out, nothing else."""
+    files = _files_under(AI_DOMAIN_ZONE_PREFIXES)
+    assert files, "AI domain analysis zone went missing"
+    violations: list[str] = []
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        for token in DEFAULT_FORBIDDEN + AI_DOMAIN_EXTRA_FORBIDDEN:
+            if token in text:
+                violations.append(f"{path}: contains {token!r}")
+    assert not violations, "AI domain zone gained forbidden capability:\n" + "\n".join(violations)
+
+
+def test_ai_infrastructure_zone_has_no_target_or_process_capability() -> None:
+    """The provider boundary may call its AI SDK only — nothing else."""
+    files = _files_under(AI_INFRA_ZONE_PREFIXES)
+    assert files, "AI infrastructure zone went missing"
+    violations: list[str] = []
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        for token in AI_INFRA_EXTRA_FORBIDDEN:
+            if token in text:
+                violations.append(f"{path}: contains {token!r}")
+        for token in HTTP_CLIENT_TOKENS:
+            if token in text:
+                violations.append(f"{path}: raw HTTP client token {token!r}")
+    assert not violations, "AI infra zone gained forbidden capability:\n" + "\n".join(violations)

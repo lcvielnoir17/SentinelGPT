@@ -92,6 +92,7 @@ class HttpAnalysisResult:
     findings: tuple[Finding, ...]
     error_kind: str | None = None
     error_detail: str = ""
+    engine_version: str = "1"
 
     def to_dict(self) -> dict[str, object]:
         severity_counts: dict[str, int] = {}
@@ -166,6 +167,7 @@ class HttpSecurityAnalysisEngine:
         content_type = _header(response.headers, "content-type") or ""
         return HttpAnalysisResult(
             engine_name=self.name,
+            engine_version=self.version,
             target_hostname=hostname,
             request_scheme=origin.scheme.lower(),
             request_port=response.final_target.port,
@@ -235,6 +237,7 @@ class HttpSecurityAnalysisEngine:
         )
         return HttpAnalysisResult(
             engine_name=self.name,
+            engine_version=self.version,
             target_hostname=context.binding.hostname,
             request_scheme=str(origin.scheme).lower(),
             request_port=int(origin.port or 0),
