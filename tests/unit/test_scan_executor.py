@@ -134,21 +134,41 @@ def test_engine_runs_inside_established_sandbox_and_cleanup_happens() -> None:
     assert services.limits.max_redirects == 10  # type: ignore[attr-defined]
 
 
-def test_engine_services_expose_no_transport_until_phase_four() -> None:
-    """The capability bundle must not leak a working network path yet."""
+def test_engine_services_http_transport_is_real_and_fail_closed() -> None:
+    """Phase 4: the factory yields the sandbox-bound transport, which
+    refuses to operate once the attempt's sandbox has been torn down."""
+    import ipaddress
+
+    from src.domain.errors import SandboxNotEstablishedError
     from src.domain.scanning.http_contract import (
-        ControlledTransportError,
-        TransportFailureKind,
+        HttpLimits,
+        HttpRequestSpec,
+        HttpScanRequest,
+        ScanCancellation,
     )
+    from src.scanning.sandbox.http_transport import SandboxHttpClient
 
     engine = RecordingEngine()
-    executor, _made = _executor()
+    executor, made = _executor()
     executor.execute_scan("target.example", engine=engine)  # type: ignore[arg-type]
 
-    (_context, services) = engine.calls[0]
-    with pytest.raises(ControlledTransportError) as err:
-        services.http_client_factory()  # type: ignore[attr-defined]
-    assert err.value.kind is TransportFailureKind.PROTOCOL_ERROR
+    (context, services) = engine.calls[0]
+    client = services.http_client_factory()  # type: ignore[attr-defined]
+    assert isinstance(client, SandboxHttpClient)
+
+    binding = ValidatedTargetBinding.create(
+        hostname="target.example",
+        addresses=(ipaddress.ip_address(AUTH_IP),),
+        validate=lambda _a: None,
+    ).with_pinned(ipaddress.ip_address(AUTH_IP))
+    from src.domain.scanning.egress import ScanNetworkContext
+
+    request = HttpScanRequest.authorize(
+        ScanNetworkContext.create(binding), HttpRequestSpec(path="/")
+    )
+    # execute_scan already destroyed its sandbox (finally) -> fail closed.
+    with pytest.raises(SandboxNotEstablishedError):
+        client.execute(request, limits=HttpLimits(), cancellation=ScanCancellation.create())
 
 
 def test_engine_failure_still_destroys_sandbox() -> None:

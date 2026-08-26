@@ -201,7 +201,11 @@ class HttpScanRequest:
 
 @dataclass(frozen=True)
 class HttpResponseData:
-    """Bounded response payload plus provenance for downstream analysis."""
+    """Bounded response payload plus provenance for downstream analysis.
+
+    ``truncated=True`` marks bodies clamped at ``HttpLimits.max_response_bytes``
+    (stream-clamped, never held unbounded in memory).
+    """
 
     status: int
     headers: tuple[tuple[str, str], ...]
@@ -209,6 +213,7 @@ class HttpResponseData:
     elapsed_ms: float
     final_target: ConnectionTarget
     via_redirects: tuple[str, ...] = ()
+    truncated: bool = False
 
 
 @runtime_checkable

@@ -61,9 +61,15 @@ DEFAULT_FORBIDDEN = HTTP_CLIENT_TOKENS + NETWORK_PRIMITIVE_TOKENS + PROCESS_TOKE
 DNS_ZONE_ALLOWED = frozenset(
     {"import socket", "from socket", "socket.", "getaddrinfo", "gethostbyname"}
 )
-# Sandbox zone: container/process lifecycle only; it must never open its own
-# sockets so all traffic stays inside the isolated runtime it creates.
-SANDBOX_ZONE_ALLOWED = frozenset(PROCESS_TOKENS)
+# Sandbox zone: container/process lifecycle plus the sandbox-aware HTTP
+# transport. The httpx allowance is deliberate and narrow: the transport's
+# traffic originates INSIDE the established sandbox runtime (kernel-governed),
+# and the host-side module drives it via the process seam. Nothing outside
+# this zone may import any HTTP client.
+SANDBOX_ZONE_ALLOWED = frozenset(PROCESS_TOKENS) | {
+    "import httpx",
+    "from httpx",
+}
 
 
 def _zone_for(relative_posix: str) -> str:

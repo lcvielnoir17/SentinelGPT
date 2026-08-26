@@ -26,13 +26,15 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from src.domain.errors import ScannerExecutionBlockedError
 from src.domain.scanning.egress import ScanNetworkContext
+from src.domain.scanning.http_contract import HttpLimits, ScanCancellation
 from src.scanning.engines.base import require_scan_context
-from src.scanning.engines.services import EngineServices, default_engine_services
+from src.scanning.engines.services import EngineServices
 from src.scanning.sandbox.base import (
     EgressSandbox,
     SandboxFactory,
     require_established,
 )
+from src.scanning.sandbox.http_transport import SandboxHttpClient
 from src.scanning.sandbox.policy import SandboxEgressPolicy
 
 if TYPE_CHECKING:
@@ -94,6 +96,7 @@ class SandboxedScanExecutor:
         engine: SandboxAwareEngine | None = None,
         target_id: UUID | None = None,
         now: datetime | None = None,
+        limits: HttpLimits | None = None,
     ) -> None:
         """Execute the chain end-to-end for one scan attempt."""
         binding, sandbox = self.prepare(hostname, target_id=target_id, now=now)
@@ -105,10 +108,35 @@ class SandboxedScanExecutor:
                 # a fully verified sandbox does not open the execution gate;
                 # that opening is a deliberate, reviewed act (ADR-0003).
                 raise ScannerExecutionBlockedError()
-            services = default_engine_services(context)
+            services = self._build_services(context, sandbox, limits)
             engine.execute(context, services)
         finally:
             sandbox.destroy()
+
+    def _build_services(
+        self,
+        context: ScanNetworkContext,
+        sandbox: EgressSandbox,
+        limits: HttpLimits | None,
+    ) -> EngineServices:
+        """Bind per-attempt capabilities to THIS context and sandbox.
+
+        The HTTP client factory closes over the established sandbox and the
+        resolution service, so every request an engine issues travels the
+        same validated path; engines cannot construct a wider transport.
+        """
+        effective_limits = limits or HttpLimits()
+        resolution = self._resolution
+
+        def factory() -> SandboxHttpClient:
+            return SandboxHttpClient(sandbox, resolution)
+
+        return EngineServices(
+            http_client_factory=factory,
+            cancellation=ScanCancellation.create(),
+            limits=effective_limits,
+            _context=context,
+        )
 
     @staticmethod
     def _context_for(binding: ValidatedTargetBinding) -> ScanNetworkContext:

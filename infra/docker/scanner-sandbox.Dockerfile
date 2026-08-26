@@ -23,8 +23,10 @@
 
 FROM python:3.12-slim
 
+# iptables: kernel-level egress enforcement installed by the sandbox lifecycle.
+# openssl: enables seeded TLS endpoints in local security fixtures/tests.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends iptables \
+    && apt-get install -y --no-install-recommends iptables openssl \
     && rm -rf /var/lib/apt/lists/*
 
 # Long-lived placeholder process: the sandbox lifecycle execs workload
