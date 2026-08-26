@@ -16,10 +16,18 @@ from src.infrastructure.database.models.lookup_models import (
     FindingLifecycleStatus,
     ReportFormat,
     ScanEngine,
+    ScanProfile,
     ScanStatus,
     SeverityLevel,
 )
 from src.infrastructure.database.models.refresh_session_models import RefreshSession
+from src.infrastructure.database.models.scan_models import (
+    AuthorizationAttestation,
+    Scan,
+    ScanAiAssessment,
+    ScanEngineExecution,
+    ScanFinding,
+)
 from src.infrastructure.database.models.target_models import Target
 
 __all__ = [
@@ -34,6 +42,12 @@ __all__ = [
     "ScanStatus",
     "FindingLifecycleStatus",
     "ScanEngine",
+    "ScanProfile",
     "ReportFormat",
     "AttestationMethod",
+    "AuthorizationAttestation",
+    "Scan",
+    "ScanEngineExecution",
+    "ScanFinding",
+    "ScanAiAssessment",
 ]

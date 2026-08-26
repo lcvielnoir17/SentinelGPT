@@ -84,3 +84,12 @@ class AttestationMethod(Base):
     requires_manual_review: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false"
     )
+
+
+class ScanProfile(Base):
+    """Scan depth profiles (quick-check / standard / full-assessment)."""
+
+    __tablename__ = "scan_profile"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(30), unique=True)
