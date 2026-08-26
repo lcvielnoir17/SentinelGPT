@@ -4,6 +4,7 @@ Aggregates all model modules so Alembic's ``target_metadata`` sees every
 table and autogenerate stays complete.
 """
 
+from src.infrastructure.database.models.audit_models import AuditLogEntry
 from src.infrastructure.database.models.base import Base
 from src.infrastructure.database.models.identity_models import (
     Organization,
@@ -50,4 +51,5 @@ __all__ = [
     "ScanEngineExecution",
     "ScanFinding",
     "ScanAiAssessment",
+    "AuditLogEntry",
 ]
