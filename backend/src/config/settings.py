@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     )
     gemini_flash_lite_model: str = "gemini-2.0-flash-lite"
     gemini_flash_model: str = "gemini-2.0-flash"
+    # Phase 7 execution switch (ADR-0009): the composition root schedules
+    # background scan jobs ONLY when this is true. Default OFF keeps the
+    # scanner execution gate closed everywhere (dev, tests, first deploy).
+    scanner_execution_enabled: bool = Field(
+        default=False,
+        description="Enable background execution of authorized scans (Phase 7+)",
+    )
 
     # Security & Authentication (Invariants: HttpOnly; Secure; SameSite=Strict cookies)
     jwt_secret_key: str = Field(
