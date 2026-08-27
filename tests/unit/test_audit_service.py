@@ -140,8 +140,10 @@ async def test_audit_table_rejects_update_and_delete_at_db_level() -> None:
     from src.infrastructure.database.connection import get_async_engine
 
     engine = get_async_engine()
+
+    # Create the test row in its own transaction.
+    entry_id = uuid.uuid4()
     async with engine.begin() as conn:
-        entry_id = uuid.uuid4()
         await conn.execute(
             sa.text(
                 "INSERT INTO audit_log_entry (id, action_code, entity_type, entity_id,"
@@ -149,10 +151,20 @@ async def test_audit_table_rejects_update_and_delete_at_db_level() -> None:
             ),
             {"id": entry_id, "eid": uuid.uuid4()},
         )
+
+    # UPDATE must be tested in its own transaction because PostgreSQL
+    # aborts the transaction after the trigger raises.
+    async with engine.connect() as conn:
         with pytest.raises(Exception, match="append-only"):
             await conn.execute(
                 sa.text("UPDATE audit_log_entry SET action_code='Y' WHERE id=:i"),
                 {"i": entry_id},
             )
+
+    # DELETE must use a fresh transaction/connection for the same reason.
+    async with engine.connect() as conn:
         with pytest.raises(Exception, match="append-only"):
-            await conn.execute(sa.text("DELETE FROM audit_log_entry WHERE id=:i"), {"i": entry_id})
+            await conn.execute(
+                sa.text("DELETE FROM audit_log_entry WHERE id=:i"),
+                {"i": entry_id},
+            )
