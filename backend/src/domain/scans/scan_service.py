@@ -596,6 +596,15 @@ class ScanService:
             provider_name = meta.provider if meta else "unknown"
             model_name = meta.model if meta else "unknown"
 
+        # Per-finding fallback explanations: when the AI is unavailable,
+        # every finding still gets a deterministic template so the
+        # per-finding endpoint (SRS Ch5 §9) has data to serve without
+        # the AI ever being called again. This is the "never silently
+        # present incomplete data" principle (SRS Ch2 §11).
+        per_finding_payload = self._build_per_finding_fallback_payload(analysis_result)
+        if isinstance(payload, dict):
+            payload.setdefault("findings", per_finding_payload)
+
         final_status = (
             SCAN_STATUS_REPORT_READY_CODE if is_available else SCAN_STATUS_REPORT_DEGRADED_CODE
         )
@@ -630,6 +639,26 @@ class ScanService:
             return GeminiEvidenceAnalyzer.from_settings()
         except Exception:  # noqa: BLE001 - AI must degrade, never block scans
             return None
+
+    @staticmethod
+    def _build_per_finding_fallback_payload(analysis_result: Any) -> dict[str, object]:
+        """Build a per-finding fallback map for the assessment payload.
+
+        Always uses the deterministic template — no AI text appears here.
+        Keyed by finding ID (the same key the per-finding endpoint reads).
+        """
+        from src.domain.scanning.analysis.fallback_templates import (
+            build_fallback_explanation,
+        )
+
+        result: dict[str, object] = {}
+        for finding in getattr(analysis_result, "findings", ()) or ():
+            explanation = build_fallback_explanation(
+                finding_id=finding.id,
+                category_code=finding.category,
+            )
+            result[finding.id] = explanation.to_dict()
+        return result
 
     # ------------------------------------------------------------------ #
     # Internals                                                          #

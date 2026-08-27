@@ -9,11 +9,12 @@ AI), never from API-layer networking.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -136,7 +137,15 @@ async def create_scan(
     # the operator-enabled switch is on. Otherwise the scan remains QUEUED —
     # visible, cancellable, and never executed.
     if get_settings().scanner_execution_enabled:
-        response_bg.add_task(service.build_background_job(details.id, ai_analyzer=_maybe_gemini()))
+        from src.workers.scan_tasks import enqueue_scan
+
+        task_id = enqueue_scan(details.id)
+        if not task_id:
+            # Worker tier unavailable; fall back to in-process scheduling so
+            # a single-host dev deployment still runs scans end-to-end.
+            response_bg.add_task(
+                service.build_background_job(details.id, ai_analyzer=_maybe_gemini())
+            )
     return _to_response(details)
 
 
@@ -193,6 +202,144 @@ async def list_findings(
 
 
 @router.get(
+    "/{scan_id}/findings/{finding_id}/explanation",
+    response_model=dict[str, object],
+    summary="Per-finding AI explanation (validated or fallback template)",
+)
+async def get_finding_explanation(
+    scan_id: uuid.UUID,
+    finding_id: uuid.UUID,
+    session: SessionDep,
+    current_user: CurrentUser,
+) -> dict[str, object]:
+    """Return the AI explanation for one finding.
+
+    The endpoint is honest about provenance: a finding without an
+    explanation is served a deterministic fallback template (NEVER a 404
+    or an empty body) so the user always gets a readable explanation.
+    The ``validationStatus`` field of the response is the single
+    boolean the UI needs to label the answer correctly.
+    """
+    service = _service(session, current_user)
+    await service.get_scan(scan_id)  # tenant-isolation gate
+    from src.domain.scanning.analysis.fallback_templates import (
+        build_fallback_explanation,
+    )
+    from src.infrastructure.database.repositories.scan_repository import (
+        ScanEngineExecutionRepository,
+    )
+
+    repository = ScanEngineExecutionRepository(session)
+    finding_dto = await repository.get_finding_with_evidence(finding_id)
+    if finding_dto is None:
+        return {
+            "available": False,
+            "validationStatus": "FALLBACK_USED",
+            "fallbackReason": "finding_not_found",
+        }
+
+    # Confirm the finding belongs to this scan (cross-scan isolation).
+    findings_in_scan = await repository.list_finding_dtos(scan_id)
+    if not any(str(row["id"]) == str(finding_id) for row in findings_in_scan):
+        return {
+            "available": False,
+            "validationStatus": "FALLBACK_USED",
+            "fallbackReason": "finding_not_in_scan",
+        }
+
+    assessment = await repository.get_assessment(scan_id)
+    if assessment is None or not assessment.is_available:
+        # AI is unavailable, didn't run, or produced a failed response:
+        # always return a fallback so the user sees deterministic content.
+        explanation = build_fallback_explanation(
+            finding_id=str(finding_id),
+            category_code=str(finding_dto.get("category", "")),
+        )
+        return {
+            "available": True,
+            "validationStatus": explanation.validation_status.value,
+            "explanation": explanation.to_dict(),
+        }
+
+    # AI output is available: emit the assessment's per-finding narrative
+    # when it carries one, otherwise the same deterministic fallback.
+    payload = dict(assessment.payload or {})
+    per_finding = payload.get("findings")
+    if isinstance(per_finding, dict) and str(finding_id) in per_finding:
+        return {
+            "available": True,
+            "validationStatus": "validated",
+            "explanation": per_finding[str(finding_id)],
+        }
+
+    explanation = build_fallback_explanation(
+        finding_id=str(finding_id),
+        category_code=str(finding_dto.get("category", "")),
+    )
+    return {
+        "available": True,
+        "validationStatus": explanation.validation_status.value,
+        "explanation": explanation.to_dict(),
+    }
+
+
+@router.get(
+    "/{scan_id}/report",
+    summary="Render the canonical report for one scan in the requested format",
+    responses={
+        200: {
+            "description": "Report rendered in the requested format.",
+            "content": {
+                "application/json": {},
+                "text/csv": {},
+            },
+        },
+        404: {"description": "Scan not found."},
+        422: {"description": "Unsupported format."},
+    },
+)
+async def render_scan_report(
+    scan_id: uuid.UUID,
+    format: Annotated[  # noqa: A002 - public API name
+        str,
+        Query(pattern="^(json|csv)$", description="Report format: json or csv"),
+    ] = "json",
+    session: SessionDep = None,  # type: ignore[assignment]
+    current_user: CurrentUser = None,  # type: ignore[assignment]
+) -> Response:
+    """Render the report for one scan as JSON or CSV (SRS Ch10 §4).
+
+    The renderer is read-only: it never mutates any database state and
+    never alters the canonical finding/severity/lifecycle values
+    established by the scan pipeline (Ch10 §3 integrity constraint).
+    """
+    from fastapi.responses import JSONResponse, PlainTextResponse
+
+    service = _service(session, current_user)
+    await service.get_scan(scan_id)  # tenant-isolation gate
+
+    from src.reporting.assembler import ReportAssembler
+    from src.reporting.export_formatters.csv_formatter import render_csv_report
+    from src.reporting.export_formatters.json_formatter import render_json_report
+
+    document = await ReportAssembler(session).assemble(scan_id)
+    if document is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": {"code": "NOT_FOUND", "message": "Scan not found."}},
+        )
+
+    if format == "json":
+        body = render_json_report(document)
+        return JSONResponse(
+            status_code=200,
+            content=json.loads(body),
+        )
+    body = render_csv_report(document)
+    return PlainTextResponse(content=body, media_type="text/csv; charset=utf-8")
+
+
+@router.get(
     "/{scan_id}/assessment",
     response_model=AssessmentResponse | dict[str, str],
     summary="AI assessment for a scan (or controlled unavailability)",
@@ -245,9 +392,13 @@ async def rescan_scan(
     service = _service(session, current_user)
     new_details = await service.rescan_scan(scan_id)
     if get_settings().scanner_execution_enabled:
-        response_bg.add_task(
-            service.build_background_job(new_details.id, ai_analyzer=_maybe_gemini())
-        )
+        from src.workers.scan_tasks import enqueue_scan
+
+        task_id = enqueue_scan(new_details.id)
+        if not task_id:
+            response_bg.add_task(
+                service.build_background_job(new_details.id, ai_analyzer=_maybe_gemini())
+            )
     return _to_response(new_details)
 
 

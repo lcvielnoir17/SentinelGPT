@@ -293,6 +293,74 @@ class ScanEngineExecutionRepository:
             for row in rows.all()
         ]
 
+    async def get_finding_with_evidence(
+        self, finding_id: uuid.UUID
+    ) -> dict[str, object] | None:
+        """One finding joined with its evidence rows + canonical category.
+
+        The category code is the persisted DB code (post
+        ``scan_service._map_category``), which is the same key the
+        fallback templates are registered against.
+        """
+        from src.infrastructure.database.models import (
+            FindingCategory,
+            FindingEvidence,
+            SeverityLevel,
+        )
+
+        finding_row = (
+            await self._session.execute(
+                select(
+                    ScanFinding.id,
+                    ScanFinding.title,
+                    ScanFinding.description,
+                    ScanFinding.evidence,
+                    ScanFinding.location,
+                    ScanFinding.recommendation,
+                    SeverityLevel.code.label("severity_code"),
+                    FindingCategory.code.label("category_code"),
+                )
+                .join(
+                    ScanEngineExecution,
+                    ScanFinding.execution_id == ScanEngineExecution.id,
+                )
+                .join(FindingCategory, ScanFinding.category_id == FindingCategory.id)
+                .join(SeverityLevel, ScanFinding.severity_id == SeverityLevel.id)
+                .where(ScanFinding.id == finding_id)
+            )
+        ).first()
+        if finding_row is None:
+            return None
+
+        evidence_rows = await self._session.execute(
+            select(
+                FindingEvidence.id,
+                FindingEvidence.evidence_type,
+                FindingEvidence.content,
+            )
+            .where(FindingEvidence.finding_id == finding_id)
+            .order_by(FindingEvidence.created_at.asc())
+        )
+        evidence = [
+            {
+                "id": str(ev.id),
+                "type": ev.evidence_type,
+                "content": ev.content,
+            }
+            for ev in evidence_rows.all()
+        ]
+        return {
+            "id": str(finding_row.id),
+            "title": finding_row.title,
+            "description": finding_row.description,
+            "evidence": finding_row.evidence,
+            "location": finding_row.location,
+            "recommendation": finding_row.recommendation,
+            "severity": finding_row.severity_code,
+            "category": finding_row.category_code,
+            "evidence_rows": evidence,
+        }
+
     async def get_assessment_dto(self, scan_id: uuid.UUID) -> dict[str, object] | None:
         row = await self.get_assessment(scan_id)
         if row is None:

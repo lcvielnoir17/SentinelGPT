@@ -46,3 +46,8 @@ ENGINE_HEADERS: str = "headers-analyzer"
 ENGINE_SSL: str = "ssl-inspector"
 ENGINE_DNS: str = "dns-lookup"
 ENGINE_WHOIS: str = "whois-lookup"
+
+# Celery queue names (SRS Ch6 §6: separate queues per concern).
+CELERY_QUEUE_SCAN: str = "scan"
+CELERY_QUEUE_AI: str = "ai"
+CELERY_QUEUE_REPORT: str = "report"

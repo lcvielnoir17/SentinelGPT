@@ -117,6 +117,7 @@ exclude = [
 module = [
     "asyncpg.*",
     "google.*",
+    "celery.*",
 ]
 ignore_missing_imports = true
 

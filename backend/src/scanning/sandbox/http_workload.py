@@ -97,14 +97,19 @@ def main(argv: list[str]) -> int:
     max_bytes = int(spec["max_response_bytes"])
 
     started = time.monotonic()
+    ca_path: str | None = None
     try:
         verify: bool | ssl.SSLContext = True
         ca_b64 = spec.get("ca_b64")
         if ca_b64:
             # Scan-scoped CA pinning: an explicitly supplied test/enterprise
             # CA is ADDED to default verification; validation itself is
-            # never disabled.
-            ca_path = "/tmp/sgpt-scan-ca.pem"
+            # never disabled. The file is created in a per-invocation secure
+            # temp directory and unlinked before the exchange completes.
+            import tempfile
+
+            tmp_dir = tempfile.mkdtemp(prefix="sgpt-scan-")
+            ca_path = f"{tmp_dir}/ca.pem"
             with open(ca_path, "wb") as fh:
                 fh.write(base64.b64decode(ca_b64))
             ctx = ssl.create_default_context()
@@ -153,6 +158,13 @@ def main(argv: list[str]) -> int:
     except Exception as exc:  # noqa: BLE001 - mapped onto taxonomy below
         kind, detail = _classify(exc)
         return _emit_error(kind, detail)
+    finally:
+        if ca_path is not None:
+            import os
+            import shutil
+
+            with __import__("contextlib").suppress(OSError):
+                shutil.rmtree(os.path.dirname(ca_path), ignore_errors=True)
 
     elapsed_ms = round((time.monotonic() - started) * 1000.0, 2)
     payload = json.dumps(
