@@ -228,3 +228,79 @@ async def get_assessment(scan_id: uuid.UUID, session: SessionDep, current_user: 
         payload=cast("dict[str, Any]", dto["payload"]),
         created_at=str(dto["createdAt"]),
     )
+
+
+@router.post(
+    "/{scan_id}/rescan",
+    response_model=ScanResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new scan linked to a previous scan (rescan)",
+)
+async def rescan_scan(
+    scan_id: uuid.UUID,
+    response_bg: BackgroundTasks,
+    session: SessionDep,
+    current_user: CurrentUser,
+) -> ScanResponse:
+    service = _service(session, current_user)
+    new_details = await service.rescan_scan(scan_id)
+    if get_settings().scanner_execution_enabled:
+        response_bg.add_task(
+            service.build_background_job(new_details.id, ai_analyzer=_maybe_gemini())
+        )
+    return _to_response(new_details)
+
+
+class FindingCompareItem(BaseModel):
+    id: str
+    fingerprint: str
+    title: str
+
+
+class CompareResponse(BaseModel):
+    new_: list[FindingCompareItem] = Field(alias="new")
+    persistent: list[FindingCompareItem]
+    resolved: list[FindingCompareItem]
+    regressed: list[FindingCompareItem]
+
+    model_config = {"populate_by_name": True}
+
+
+@router.get(
+    "/{scan_a_id}/compare/{scan_b_id}",
+    response_model=CompareResponse,
+    summary="Compare findings between two scans of the same target",
+)
+async def compare_scans(
+    scan_a_id: uuid.UUID,
+    scan_b_id: uuid.UUID,
+    session: SessionDep,
+    current_user: CurrentUser,
+) -> CompareResponse:
+    result = await _service(session, current_user).compare_scans(scan_a_id, scan_b_id)
+    return CompareResponse(
+        new=[
+            FindingCompareItem(
+                id=str(i["id"]), fingerprint=str(i["fingerprint"]), title=str(i["title"])
+            )
+            for i in result["new"]
+        ],
+        persistent=[
+            FindingCompareItem(
+                id=str(i["id"]), fingerprint=str(i["fingerprint"]), title=str(i["title"])
+            )
+            for i in result["persistent"]
+        ],
+        resolved=[
+            FindingCompareItem(
+                id=str(i["id"]), fingerprint=str(i["fingerprint"]), title=str(i["title"])
+            )
+            for i in result["resolved"]
+        ],
+        regressed=[
+            FindingCompareItem(
+                id=str(i["id"]), fingerprint=str(i["fingerprint"]), title=str(i["title"])
+            )
+            for i in result["regressed"]
+        ],
+    )

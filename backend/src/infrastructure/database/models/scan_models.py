@@ -148,7 +148,13 @@ class ScanEngineExecution(Base):
 
 
 class ScanFinding(Base):
-    """One deterministic finding persisted from an engine execution."""
+    """One deterministic finding persisted from an engine execution.
+
+    Phase 9 adds identity fields (fingerprint, target/scan denormalization,
+    source engine code, affected asset) to support cross-scan lifecycle
+    tracking. Existing rows remain valid; new columns are nullable for
+    backward compatibility and are populated for all new findings.
+    """
 
     __tablename__ = "scan_finding"
 
@@ -174,7 +180,67 @@ class ScanFinding(Base):
     evidence: Mapped[str] = mapped_column(Text, nullable=False, default="")
     location: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     recommendation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Phase 9 identity — nullable for backward compatibility, populated for
+    # all post-migration persisted findings via canonical DB category code.
+    fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    target_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("target.id", ondelete="RESTRICT"), nullable=True
+    )
+    scan_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("scan.id", ondelete="CASCADE"), nullable=True
+    )
+    source_engine_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    affected_asset: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, server_default=func.now(), nullable=False
+    )
+
+
+class FindingEvidence(Base):
+    """Typed, bounded, immutable evidence rows linked to a finding."""
+
+    __tablename__ = "finding_evidence"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    finding_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("scan_finding.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    evidence_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, server_default=func.now(), nullable=False
+    )
+
+
+class FindingStatusHistory(Base):
+    """Append-oriented lifecycle history keyed by fingerprint + target."""
+
+    __tablename__ = "finding_status_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("target.id", ondelete="RESTRICT"), nullable=False
+    )
+    finding_lifecycle_status_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("finding_lifecycle_status.id", ondelete="RESTRICT"), nullable=False
+    )
+    observed_in_scan_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("scan.id", ondelete="CASCADE"), nullable=False
+    )
+    effective_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, server_default=func.now(), nullable=False
     )
 

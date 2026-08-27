@@ -24,6 +24,8 @@ from src.infrastructure.database.models.lookup_models import (
 from src.infrastructure.database.models.refresh_session_models import RefreshSession
 from src.infrastructure.database.models.scan_models import (
     AuthorizationAttestation,
+    FindingEvidence,
+    FindingStatusHistory,
     Scan,
     ScanAiAssessment,
     ScanEngineExecution,
@@ -50,6 +52,8 @@ __all__ = [
     "Scan",
     "ScanEngineExecution",
     "ScanFinding",
+    "FindingEvidence",
+    "FindingStatusHistory",
     "ScanAiAssessment",
     "AuditLogEntry",
 ]
