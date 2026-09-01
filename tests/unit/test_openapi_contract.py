@@ -20,6 +20,7 @@ Both checks consult the *actual* FastAPI application via
 beyond the high-level grouping assertions (P0-1 wants every currently
 registered route, so the live app is the source of truth).
 """
+
 from __future__ import annotations
 
 import copy
@@ -95,9 +96,7 @@ def _live_v1_paths_set() -> set[str]:
     included routers via the private ``api_router.routes`` member;
     ``app.router.routes`` only exposes the top-level wrappers.
     """
-    meta_routes = {
-        "/api/v1/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"
-    }
+    meta_routes = {"/api/v1/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"}
     app = create_application()
     schema_paths = set(app.openapi().get("paths", {}).keys())
     return {p for p in schema_paths if p.startswith("/api/v1/") and p not in meta_routes}
@@ -117,9 +116,7 @@ def test_live_openapi_contains_every_registered_v1_route() -> None:
     schema = _live_schema()
     schema_paths = {p for p in schema["paths"] if p.startswith("/api/v1/")}
     missing = live_paths - schema_paths
-    assert not missing, (
-        f"Live /api/v1 routes missing from OpenAPI schema: {sorted(missing)}"
-    )
+    assert not missing, f"Live /api/v1 routes missing from OpenAPI schema: {sorted(missing)}"
 
 
 def test_live_openapi_route_groups_have_expected_density() -> None:
@@ -134,14 +131,12 @@ def test_live_openapi_route_groups_have_expected_density() -> None:
         if not p.startswith("/api/v1/"):
             continue
         # /api/v1/<group>/...
-        parts = p[len("/api/v1/"):].split("/")
+        parts = p[len("/api/v1/") :].split("/")
         group = parts[0]
         by_first_segment[group] = by_first_segment.get(group, 0) + 1
 
     for group in ("healthz", "auth", "targets", "scans", "audit-log"):
-        assert group in by_first_segment, (
-            f"Route group /api/v1/{group}/ missing from the schema"
-        )
+        assert group in by_first_segment, f"Route group /api/v1/{group}/ missing from the schema"
 
 
 def test_live_openapi_declares_refresh_csrf_header_required() -> None:
@@ -183,9 +178,7 @@ def test_live_openapi_csrf_header_schema_constrains_value_to_1() -> None:
 @pytest.fixture(scope="module")
 def committed_schema() -> dict[str, Any]:
     """Load the committed openapi.json artifact."""
-    assert COMMITTED_OPENAPI.exists(), (
-        f"Missing committed artifact: {COMMITTED_OPENAPI}"
-    )
+    assert COMMITTED_OPENAPI.exists(), f"Missing committed artifact: {COMMITTED_OPENAPI}"
     loaded: dict[str, Any] = json.loads(COMMITTED_OPENAPI.read_text())
     return loaded
 
@@ -221,14 +214,10 @@ def test_committed_artifact_contains_every_registered_v1_route(
     committed_schema: dict[str, Any],
 ) -> None:
     """P0-1 (committed side): every live /api/v1 route is in the artifact."""
-    committed_paths = {
-        p for p in committed_schema["paths"] if p.startswith("/api/v1/")
-    }
+    committed_paths = {p for p in committed_schema["paths"] if p.startswith("/api/v1/")}
     live_paths = _live_v1_paths()
     missing = live_paths - committed_paths
-    assert not missing, (
-        f"Live routes missing from committed artifact: {sorted(missing)}"
-    )
+    assert not missing, f"Live routes missing from committed artifact: {sorted(missing)}"
 
 
 def test_committed_artifact_declares_refresh_csrf_header_required(

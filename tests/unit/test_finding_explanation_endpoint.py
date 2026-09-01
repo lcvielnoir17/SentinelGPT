@@ -278,9 +278,7 @@ def test_finding_explanation_does_not_silently_emit_ai_text_for_known_cve(
 
     response = client.get(f"/api/v1/scans/{scan_id}/findings/{finding_id}/explanation")
     body = response.json()
-    expected = build_fallback_explanation(
-        finding_id=str(finding_id), category_code="KNOWN_CVE"
-    )
+    expected = build_fallback_explanation(finding_id=str(finding_id), category_code="KNOWN_CVE")
     assert body["explanation"]["explanation_text"] == expected.explanation_text
     assert body["explanation"]["validation_status"] == "fallback_used"
 

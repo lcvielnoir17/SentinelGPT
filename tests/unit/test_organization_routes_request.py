@@ -45,9 +45,7 @@ def test_add_member_rejects_invalid_uuid_in_camelcase_input() -> None:
 def test_add_member_rejects_invalid_role_pattern() -> None:
     """The role pattern is enforced regardless of the field alias used."""
     with pytest.raises(ValidationError):
-        AddMemberRequest.model_validate(
-            {"userId": str(uuid.uuid4()), "role": "GUEST"}
-        )
+        AddMemberRequest.model_validate({"userId": str(uuid.uuid4()), "role": "GUEST"})
 
 
 def test_add_member_serialization_emits_camelcase_user_id() -> None:
@@ -57,9 +55,7 @@ def test_add_member_serialization_emits_camelcase_user_id() -> None:
     means ``serialization_alias`` is the value the client sees on the wire.
     """
     user_id = uuid.uuid4()
-    request = AddMemberRequest.model_validate(
-        {"userId": str(user_id), "role": "MEMBER"}
-    )
+    request = AddMemberRequest.model_validate({"userId": str(user_id), "role": "MEMBER"})
     dumped = request.model_dump(by_alias=True)
     assert "userId" in dumped
     assert dumped["userId"] == user_id

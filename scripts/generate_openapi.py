@@ -12,6 +12,7 @@ Run from the repository root::
 
     .venv/Scripts/python scripts/generate_openapi.py
 """
+
 from __future__ import annotations
 
 import json
@@ -56,20 +57,14 @@ def _enforce_csrf_header_required(schema: dict[str, Any]) -> None:
                 raise RuntimeError(f"Expected {method.upper()} {path} in OpenAPI schema")
             params: list[dict[str, Any]] = op.setdefault("parameters", [])
             for p in params:
-                if (
-                    p.get("name") == "x-refresh-request"
-                    and p.get("in") == "header"
-                ):
+                if p.get("name") == "x-refresh-request" and p.get("in") == "header":
                     p["required"] = True
                     p["description"] = _CSRF_PARAM_DESCRIPTION
                     p["schema"] = {"type": "string", "enum": ["1"]}
             if not any(
-                p.get("name") == "x-refresh-request" and p.get("in") == "header"
-                for p in params
+                p.get("name") == "x-refresh-request" and p.get("in") == "header" for p in params
             ):
-                raise RuntimeError(
-                    f"x-refresh-request parameter missing from {method} {path}"
-                )
+                raise RuntimeError(f"x-refresh-request parameter missing from {method} {path}")
 
 
 def main() -> None:
@@ -78,9 +73,7 @@ def main() -> None:
     # ``setdefault`` ensures we don't clobber a configured environment
     # (CI, staging, production).
     os.environ.setdefault("ENVIRONMENT", "test")
-    os.environ.setdefault(
-        "JWT_SECRET_KEY", "test-secret-key-must-be-at-least-32-chars-long"
-    )
+    os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-must-be-at-least-32-chars-long")
     os.environ.setdefault(
         "DATABASE_URL",
         "postgresql+asyncpg://postgres:postgres@localhost:5432/sentinelgpt_test",

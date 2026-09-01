@@ -166,9 +166,7 @@ async def test_me_returns_401_for_inactive_user(
 
 
 @pytest.mark.asyncio
-async def test_me_does_not_issue_cookies(
-    client: AsyncClient, state: dict[str, list[User]]
-) -> None:
+async def test_me_does_not_issue_cookies(client: AsyncClient, state: dict[str, list[User]]) -> None:
     """/me is a pure read — it must not set or clear any auth cookies."""
     user = _make_user()
     state["users"].append(user)

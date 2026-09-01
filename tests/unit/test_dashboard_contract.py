@@ -185,9 +185,7 @@ def test_dashboard_endpoints_registered_in_router() -> None:
                 # (FastAPI stores the mount prefix on `_IncludedRouter`).
                 inc = getattr(route, "include_context", None)
                 sub_prefix = prefix + (
-                    inc.prefix
-                    if inc is not None
-                    else getattr(route, "prefix", "")
+                    inc.prefix if inc is not None else getattr(route, "prefix", "")
                 )
                 found |= _walk(route.original_router, sub_prefix)
         return found

@@ -15,7 +15,6 @@ complete lifecycle:
 
 import json
 import sys
-import time
 import uuid
 
 import httpx
@@ -137,9 +136,7 @@ def main() -> int:
         )
         show("patch_hostname_forbidden", r)
         if r.status_code not in (400, 422):
-            failures.append(
-                f"hostname/URL mutation was not rejected: status={r.status_code}"
-            )
+            failures.append(f"hostname/URL mutation was not rejected: status={r.status_code}")
 
         # 6b: archive toggle works.
         r = client.patch(
@@ -228,17 +225,13 @@ def main() -> int:
             )
             show("intruder_login", r)
             if r.status_code != 200:
-                failures.append(
-                    f"intruder login failed: {r.status_code} {r.text}"
-                )
+                failures.append(f"intruder login failed: {r.status_code} {r.text}")
             else:
                 # 10b-i: try to GET the other user's target -> 404 (not 403, per SRS)
                 r = intruder.get(f"/api/v1/targets/{target_id}")
                 show("intruder_get_target", r)
                 if r.status_code != 404:
-                    failures.append(
-                        f"cross-tenant GET should be 404, got {r.status_code}"
-                    )
+                    failures.append(f"cross-tenant GET should be 404, got {r.status_code}")
                 # 10b-ii: try to PATCH someone else's target -> 404
                 r = intruder.patch(
                     f"/api/v1/targets/{target_id}",
@@ -246,9 +239,7 @@ def main() -> int:
                 )
                 show("intruder_patch_target", r)
                 if r.status_code != 404:
-                    failures.append(
-                        f"cross-tenant PATCH should be 404, got {r.status_code}"
-                    )
+                    failures.append(f"cross-tenant PATCH should be 404, got {r.status_code}")
                 # 10b-iii: try to create attestation on someone else's target
                 r = intruder.post(
                     f"/api/v1/targets/{target_id}/attestations",

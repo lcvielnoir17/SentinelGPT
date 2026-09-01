@@ -179,9 +179,7 @@ def _wire(
         "src.infrastructure.database.repositories.scan_repository.ScanEngineExecutionRepository",
         lambda _s: execs,
     )
-    monkeypatch.setattr(
-        "src.domain.audit.audit_service.AuditService", lambda _s: audit
-    )
+    monkeypatch.setattr("src.domain.audit.audit_service.AuditService", lambda _s: audit)
 
 
 async def test_running_scan_transitions_to_rejected(
@@ -320,9 +318,7 @@ async def test_missing_scan_is_a_no_op(
     def _empty_get() -> _EmptySessionmaker:
         return _EmptySessionmaker()
 
-    monkeypatch.setattr(
-        "src.workers.scan_tasks.get_async_sessionmaker", _empty_get
-    )
+    monkeypatch.setattr("src.workers.scan_tasks.get_async_sessionmaker", _empty_get)
     monkeypatch.setattr(
         "src.infrastructure.database.repositories.scan_repository.ScanRepository",
         lambda _s: MagicMock(),
@@ -331,9 +327,7 @@ async def test_missing_scan_is_a_no_op(
         "src.infrastructure.database.repositories.scan_repository.ScanEngineExecutionRepository",
         lambda _s: execs,
     )
-    monkeypatch.setattr(
-        "src.domain.audit.audit_service.AuditService", lambda _s: audit
-    )
+    monkeypatch.setattr("src.domain.audit.audit_service.AuditService", lambda _s: audit)
     # Should simply return.
     await _mark_scan_rejected(uuid.uuid4(), "phantom")
     assert audit.records == []

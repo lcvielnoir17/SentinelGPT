@@ -58,9 +58,7 @@ def test_get_async_sessionmaker_reinitialises_after_reset() -> None:
 
     # We don't actually open a connection here (no live DB in unit tests);
     # we just verify the lazy-init branch sees a clean state.
-    with patch.object(
-        db_connection, "create_async_engine", autospec=True
-    ) as mock_create:
+    with patch.object(db_connection, "create_async_engine", autospec=True) as mock_create:
         db_connection.get_async_engine()
         assert mock_create.called
         # And the previous fake engine is gone.

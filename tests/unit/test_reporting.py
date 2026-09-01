@@ -138,7 +138,13 @@ def test_csv_formatter_writes_header_and_rows() -> None:
     doc = _sample_document()
     csv_text = render_csv_report(doc)
     lines = csv_text.splitlines()
-    assert lines[0].split(",")[:5] == ["scan_id", "scan_status", "scan_profile", "target_hostname", "finding_id"]
+    assert lines[0].split(",")[:5] == [
+        "scan_id",
+        "scan_status",
+        "scan_profile",
+        "target_hostname",
+        "finding_id",
+    ]
     assert len(lines) == 2  # header + one finding
 
 

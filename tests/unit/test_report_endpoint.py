@@ -21,9 +21,7 @@ from src.reporting.assembler import (
 )
 
 
-def _patch_assembler(
-    monkeypatch: pytest.MonkeyPatch, document: ReportDocument | None
-) -> None:
+def _patch_assembler(monkeypatch: pytest.MonkeyPatch, document: ReportDocument | None) -> None:
     async def _fake_assemble(self: object, _scan_id: uuid.UUID) -> ReportDocument | None:
         return document
 

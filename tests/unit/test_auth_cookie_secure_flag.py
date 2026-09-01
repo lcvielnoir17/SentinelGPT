@@ -57,4 +57,3 @@ def test_secure_flag_follows_active_environment() -> None:
         assert _cookie_secure_flag(settings) is True
     finally:
         object.__setattr__(settings, "environment", original)
-

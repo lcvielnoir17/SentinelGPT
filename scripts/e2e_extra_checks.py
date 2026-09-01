@@ -7,10 +7,9 @@ Verifies:
   * AI assessment surfaces "controlled unavailability" when GEMINI_API_KEY is absent
   * no scan remains stuck in QUEUED unexpectedly
 """
+
 from __future__ import annotations
 
-import json
-import socket
 import sys
 import threading
 import time
@@ -28,7 +27,7 @@ TIMEOUT = 15.0
 # Listens on 127.0.0.1 only, serves a single page that emits common headers.
 # ---------------------------------------------------------------------------
 class TinyApp(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):  # silence stderr
+    def log_message(self, fmt, *args):  # silence stderr  # noqa: ARG002
         return
 
     def do_GET(self):  # noqa: N802
@@ -75,8 +74,6 @@ def main() -> int:
         check("login", r.status_code == 200, f"HTTP {r.status_code}")
         if r.status_code != 200:
             return 1
-        cookies_before = dict(client.cookies)
-        owner_id = r.json()["user"]["id"]
 
         # ----- target + attestation + scan against in-process tiny app -----
         srv, url = start_tiny_app()
@@ -87,12 +84,14 @@ def main() -> int:
             if r.status_code != 201:
                 return 1
             target_id = r.json()["id"]
-            r = client.post(f"/api/v1/targets/{target_id}/attestations",
-                            json={"method": "SELF_ATTESTATION"})
+            r = client.post(
+                f"/api/v1/targets/{target_id}/attestations", json={"method": "SELF_ATTESTATION"}
+            )
             check("create_attestation", r.status_code == 201, f"HTTP {r.status_code}")
 
-            r = client.post("/api/v1/scans",
-                            json={"targetId": target_id, "scanProfile": "quick-check"})
+            r = client.post(
+                "/api/v1/scans", json={"targetId": target_id, "scanProfile": "quick-check"}
+            )
             check("create_scan_resolvable", r.status_code == 202, f"HTTP {r.status_code}")
             scan_id = r.json()["id"]
 
@@ -131,24 +130,34 @@ def main() -> int:
             print(f"    report schema_version={rep.get('schema_version')}")
             print(f"    report severity_counts={rep.get('severity_counts')}")
             print(f"    report findings count={len(rep.get('findings', []))}")
-            print(f"    report engines={[(e.get('engine_code'), e.get('status')) for e in rep.get('engines', [])]}")
+            print(
+                f"    report engines={[(e.get('engine_code'), e.get('status')) for e in rep.get('engines', [])]}"
+            )
 
             r = client.get(f"/api/v1/scans/{scan_id}/report?format=csv")
-            check("report csv", r.status_code == 200 and r.headers.get("content-type", "").startswith("text/csv"),
-                  f"HTTP {r.status_code} ct={r.headers.get('content-type')}")
+            check(
+                "report csv",
+                r.status_code == 200 and r.headers.get("content-type", "").startswith("text/csv"),
+                f"HTTP {r.status_code} ct={r.headers.get('content-type')}",
+            )
             csv_lines = r.text.splitlines()
-            print(f"    csv lines={len(csv_lines)}; header={csv_lines[0][:120] if csv_lines else '(empty)'}")
+            print(
+                f"    csv lines={len(csv_lines)}; header={csv_lines[0][:120] if csv_lines else '(empty)'}"
+            )
 
             # ----- AI assessment (controlled unavailability expected) -----
             r = client.get(f"/api/v1/scans/{scan_id}/assessment")
             check("assessment endpoint", r.status_code == 200, f"HTTP {r.status_code}")
             assess = r.json() if r.status_code == 200 else {}
-            print(f"    assessment.available={assess.get('available')} failureKind={assess.get('failureKind')} provider={assess.get('provider')}")
+            print(
+                f"    assessment.available={assess.get('available')} failureKind={assess.get('failureKind')} provider={assess.get('provider')}"
+            )
             # GEMINI_API_KEY is empty by acceptance contract; expect available=False, failureKind != success
             check(
                 "AI assessment reports controlled unavailability",
                 assess.get("available") is False
-                and assess.get("failureKind") in {"not_ready", "ai_unavailable", "ai_disabled", "no_api_key", "not_configured"},
+                and assess.get("failureKind")
+                in {"not_ready", "ai_unavailable", "ai_disabled", "no_api_key", "not_configured"},
                 f"available={assess.get('available')} failureKind={assess.get('failureKind')}",
             )
 
@@ -158,9 +167,18 @@ def main() -> int:
             entries = r.json() if r.status_code == 200 else []
             codes = sorted({e.get("actionCode") for e in entries})
             print(f"    audit entries for scan: {len(entries)}; codes={codes}")
-            check("audit SCAN_REQUESTED persisted", any(e.get("actionCode") == "SCAN_REQUESTED" for e in entries))
-            check("audit terminal transition persisted",
-                  any(e.get("actionCode") in {"SCAN_REJECTED", "SCAN_COMPLETED", "SCAN_FAILED", "SCAN_STARTED"} for e in entries))
+            check(
+                "audit SCAN_REQUESTED persisted",
+                any(e.get("actionCode") == "SCAN_REQUESTED" for e in entries),
+            )
+            check(
+                "audit terminal transition persisted",
+                any(
+                    e.get("actionCode")
+                    in {"SCAN_REJECTED", "SCAN_COMPLETED", "SCAN_FAILED", "SCAN_STARTED"}
+                    for e in entries
+                ),
+            )
         finally:
             srv.shutdown()
 
@@ -176,7 +194,9 @@ def main() -> int:
         client.cookies.clear()
         # Re-login and try a different identity to confirm cookie state is gone.
         r = client.get("/api/v1/auth/me")
-        check("auth/me after logout (cookie cleared)", r.status_code == 401, f"HTTP {r.status_code}")
+        check(
+            "auth/me after logout (cookie cleared)", r.status_code == 401, f"HTTP {r.status_code}"
+        )
 
         # ----- stuck-scan check: are there any scans stuck in QUEUED? -----
         r = client.get("/api/v1/scans?limit=200")

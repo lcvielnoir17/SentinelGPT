@@ -49,5 +49,3 @@ htmlcov/
 # Docker/local data
 postgres-data/
 redis-data/
-# Generated API contract snapshot (regenerate via /api/v1/openapi.json)
-openapi.json

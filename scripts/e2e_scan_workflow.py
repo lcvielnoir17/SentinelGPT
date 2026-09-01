@@ -47,9 +47,7 @@ def show(label: str, response: httpx.Response) -> None:
     print(f"    body: {body_text}")
 
 
-def wait_for_terminal(
-    client: httpx.Client, scan_id: str, timeout_s: float = 45.0
-) -> str | None:
+def wait_for_terminal(client: httpx.Client, scan_id: str, timeout_s: float = 45.0) -> str | None:
     """Poll a scan until it reaches a terminal state. Return the status."""
     deadline = time.monotonic() + timeout_s
     last_status: str | None = None
@@ -148,7 +146,6 @@ def main() -> int:
         if r.status_code != 201:
             failures.append(f"create_attestation failed: {r.status_code}")
             return _summary(failures)
-        new_attestation_id = r.json()["id"]
         if r.json().get("status") != "CONFIRMED":
             failures.append(f"attestation not CONFIRMED: {r.json().get('status')}")
 
@@ -210,9 +207,7 @@ def main() -> int:
                 "REPORT_READY_DEGRADED",
                 "REJECTED",
             ):
-                failures.append(
-                    f"scan did not reach terminal status: {final.get('status')}"
-                )
+                failures.append(f"scan did not reach terminal status: {final.get('status')}")
 
         section("STEP 10 — GET /api/v1/scans/{id}/findings")
         r = client.get(f"/api/v1/scans/{scan_id}/findings")
@@ -287,18 +282,14 @@ def main() -> int:
                 r = intruder.get(f"/api/v1/scans/{scan_id}")
                 show("intruder_get_scan", r)
                 if r.status_code != 404:
-                    failures.append(
-                        f"cross-tenant GET should be 404, got {r.status_code}"
-                    )
+                    failures.append(f"cross-tenant GET should be 404, got {r.status_code}")
                 r = intruder.post(
                     "/api/v1/scans",
                     json={"targetId": new_target_id, "scanProfile": "standard"},
                 )
                 show("intruder_create_scan", r)
                 if r.status_code != 404:
-                    failures.append(
-                        f"cross-tenant POST should be 404, got {r.status_code}"
-                    )
+                    failures.append(f"cross-tenant POST should be 404, got {r.status_code}")
 
         # 14c: owner — successful access
         r = client.get(f"/api/v1/scans/{scan_id}")

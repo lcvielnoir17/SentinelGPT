@@ -448,8 +448,7 @@ async def test_execute_scan_job_emits_owner_metadata_on_state_transitions(
     assert state_transitions, "execute_scan_job must record a state transition"
     for entry in state_transitions:
         assert entry.actor_user_id is None, (
-            "SCAN_STATE_TRANSITION is a system event per SRS Ch4 §10.1; "
-            "actor must remain None."
+            "SCAN_STATE_TRANSITION is a system event per SRS Ch4 §10.1; actor must remain None."
         )
         assert entry.metadata_json.get("ownerUserId") == str(initiator_id), (
             "ownerUserId must be the scan's initiator so the v1 "

@@ -60,13 +60,13 @@ def _reset_db_engine_state() -> None:
     try:
         from src.infrastructure.database import connection as db_connection
 
-        db_connection._engine = None  # type: ignore[attr-defined]
-        db_connection._sessionmaker = None  # type: ignore[attr-defined]
+        db_connection._engine = None
+        db_connection._sessionmaker = None
     except Exception:  # noqa: BLE001 - best-effort hygiene
         logger.warning("worker_db_engine_reset_failed", exc_info=True)
 
 
-@worker_process_init.connect
+@worker_process_init.connect  # type: ignore[untyped-decorator]  # celery Signal.connect is untyped
 def _reset_db_engine_in_child(**_kwargs: object) -> None:
     """Discard any DB engine inherited from the parent process.
 
@@ -78,18 +78,18 @@ def _reset_db_engine_in_child(**_kwargs: object) -> None:
     _reset_db_engine_state()
 
 
-@task_postrun.connect
+@task_postrun.connect  # type: ignore[untyped-decorator]  # celery Signal.connect is untyped
 def _reset_db_engine_after_task(
     task_id: str,  # noqa: ARG001
     task: object,  # noqa: ARG001
-    **kwargs: object,
+    **kwargs: object,  # noqa: ARG001
 ) -> None:
     """Discard the cached engine after every task so the next task in
     the same child process re-opens it against a fresh event loop."""
     _reset_db_engine_state()
 
 
-@worker_process_shutdown.connect
+@worker_process_shutdown.connect  # type: ignore[untyped-decorator]  # celery Signal.connect is untyped
 def _dispose_db_engine_on_shutdown(**_kwargs: object) -> None:
     """Cleanly clear the DB engine on worker shutdown."""
     _reset_db_engine_state()

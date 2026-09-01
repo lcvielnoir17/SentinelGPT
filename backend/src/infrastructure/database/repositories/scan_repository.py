@@ -293,9 +293,7 @@ class ScanEngineExecutionRepository:
             for row in rows.all()
         ]
 
-    async def get_finding_with_evidence(
-        self, finding_id: uuid.UUID
-    ) -> dict[str, object] | None:
+    async def get_finding_with_evidence(self, finding_id: uuid.UUID) -> dict[str, object] | None:
         """One finding joined with its evidence rows + canonical category.
 
         The category code is the persisted DB code (post

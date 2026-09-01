@@ -3,6 +3,7 @@
 These were missed by the in-process-server approach (SSRF blocks 127.0.0.1).
 We use the existing pre-populated scan id from the e2e_scan_workflow run.
 """
+
 from __future__ import annotations
 
 import sys
@@ -25,13 +26,16 @@ def main() -> int:
         c.post("/api/v1/auth/register", json={"email": email, "password": password})
         r = c.post("/api/v1/auth/login", json={"email": email, "password": password})
         assert r.status_code == 200, r.text
-        owner_id = r.json()["user"]["id"]
 
         # Build a fresh target+attestation+scan with a known unreachable hostname
         # so we exercise REJECTED pipeline + AI assessment path deterministically.
-        r = c.post("/api/v1/targets",
-                   json={"hostname": f"audit-{suffix}.example.com",
-                         "url": f"https://audit-{suffix}.example.com/"})
+        r = c.post(
+            "/api/v1/targets",
+            json={
+                "hostname": f"audit-{suffix}.example.com",
+                "url": f"https://audit-{suffix}.example.com/",
+            },
+        )
         assert r.status_code == 201, r.text
         tid = r.json()["id"]
         c.post(f"/api/v1/targets/{tid}/attestations", json={"method": "SELF_ATTESTATION"})
@@ -41,6 +45,7 @@ def main() -> int:
 
         # Wait until terminal.
         import time
+
         deadline = time.monotonic() + 60
         last = None
         while time.monotonic() < deadline:
@@ -70,7 +75,16 @@ def main() -> int:
         print(f"audit codes: {codes}")
         if "SCAN_REQUESTED" not in codes:
             failures.append("SCAN_REQUESTED not persisted in audit log")
-        if not any(c in codes for c in ("SCAN_REJECTED", "SCAN_COMPLETED", "SCAN_FAILED", "SCAN_STARTED", "SCAN_FINISHED")):
+        if not any(
+            c in codes
+            for c in (
+                "SCAN_REJECTED",
+                "SCAN_COMPLETED",
+                "SCAN_FAILED",
+                "SCAN_STARTED",
+                "SCAN_FINISHED",
+            )
+        ):
             failures.append(f"no scan-lifecycle transition persisted: {codes}")
 
         # Findings endpoint reachable and shaped correctly.
@@ -80,7 +94,10 @@ def main() -> int:
             findings = r.json()
             print(f"  count={len(findings)}; sample={[f.get('severity') for f in findings[:5]]}")
             for f in findings:
-                if not all(k in f for k in ("id", "title", "severity", "evidence", "location", "recommendation")):
+                if not all(
+                    k in f
+                    for k in ("id", "title", "severity", "evidence", "location", "recommendation")
+                ):
                     failures.append(f"finding missing required field: {f}")
         else:
             failures.append(f"findings endpoint not reachable: HTTP {r.status_code}")
@@ -90,10 +107,20 @@ def main() -> int:
         print(f"GET /report?format=json: HTTP {r.status_code}")
         if r.status_code == 200:
             rep = r.json()
-            print(f"  schema_version={rep.get('schema_version')} lifecycle_counts={rep.get('lifecycle_counts')} severity_counts={rep.get('severity_counts')}")
-            print(f"  engines: {[(e.get('engine_code'), e.get('status')) for e in rep.get('engines', [])]}")
+            print(
+                f"  schema_version={rep.get('schema_version')} lifecycle_counts={rep.get('lifecycle_counts')} severity_counts={rep.get('severity_counts')}"
+            )
+            print(
+                f"  engines: {[(e.get('engine_code'), e.get('status')) for e in rep.get('engines', [])]}"
+            )
             print(f"  findings={len(rep.get('findings', []))} assessment={rep.get('assessment')}")
-            for k in ("schema_version", "findings", "engines", "severity_counts", "lifecycle_counts"):
+            for k in (
+                "schema_version",
+                "findings",
+                "engines",
+                "severity_counts",
+                "lifecycle_counts",
+            ):
                 if k not in rep:
                     failures.append(f"report missing required field: {k}")
 
@@ -102,7 +129,9 @@ def main() -> int:
         if r.status_code == 200 and r.headers.get("content-type", "").startswith("text/csv"):
             print(f"  csv header: {r.text.splitlines()[0][:200]}")
         else:
-            failures.append(f"csv report not as expected: HTTP {r.status_code} ct={r.headers.get('content-type')}")
+            failures.append(
+                f"csv report not as expected: HTTP {r.status_code} ct={r.headers.get('content-type')}"
+            )
 
         # Logout invalidates the session.
         r = c.get("/api/v1/auth/me")

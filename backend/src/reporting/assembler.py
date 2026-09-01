@@ -179,9 +179,7 @@ class ReportAssembler:
 
         target = await self._session.get(Target, scan.target_id)
         target_hostname = getattr(target, "hostname", "") if target is not None else ""
-        target_normalized_url = (
-            getattr(target, "normalized_url", "") if target is not None else ""
-        )
+        target_normalized_url = getattr(target, "normalized_url", "") if target is not None else ""
 
         profile_code = await self._profile_code(scan.scan_profile_id)
         status_code = await self._status_code(scan.status_id)
@@ -190,9 +188,7 @@ class ReportAssembler:
         findings = await self._findings(scan_id)
         assessment = await self._assessment(scan_id)
         fingerprints = [f.fingerprint for f in findings]
-        lifecycle_counts = await self._lifecycle_counts(
-            scan.target_id, fingerprints
-        )
+        lifecycle_counts = await self._lifecycle_counts(scan.target_id, fingerprints)
 
         severity_counts: dict[str, int] = {}
         for f in findings:
@@ -237,15 +233,11 @@ class ReportAssembler:
         from src.infrastructure.database.models import ScanStatus
 
         row = (
-            await self._session.execute(
-                select(ScanStatus.code).where(ScanStatus.id == status_id)
-            )
+            await self._session.execute(select(ScanStatus.code).where(ScanStatus.id == status_id))
         ).first()
         return str(row[0]) if row is not None else "unknown"
 
-    async def _engines(
-        self, scan_id: uuid.UUID
-    ) -> tuple[ReportEngineSummary, ...]:
+    async def _engines(self, scan_id: uuid.UUID) -> tuple[ReportEngineSummary, ...]:
         from sqlalchemy import select
 
         from src.infrastructure.database.models import (
@@ -278,9 +270,7 @@ class ReportAssembler:
             for row in rows.all()
         )
 
-    async def _findings(
-        self, scan_id: uuid.UUID
-    ) -> tuple[ReportFinding, ...]:
+    async def _findings(self, scan_id: uuid.UUID) -> tuple[ReportFinding, ...]:
         from sqlalchemy import select
 
         from src.infrastructure.database.models import (
@@ -353,9 +343,7 @@ class ReportAssembler:
             )
         return tuple(result)
 
-    async def _assessment(
-        self, scan_id: uuid.UUID
-    ) -> ReportAssessment | None:
+    async def _assessment(self, scan_id: uuid.UUID) -> ReportAssessment | None:
         from sqlalchemy import select
 
         from src.infrastructure.database.models import (
