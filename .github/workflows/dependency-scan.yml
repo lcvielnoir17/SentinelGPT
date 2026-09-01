@@ -13,6 +13,9 @@ jobs:
   pip-audit-scheduled:
     name: Nightly pip-audit against main
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -32,9 +35,6 @@ jobs:
         run: pip-audit -r requirements-dev.lock --strict
 
       - name: Frontend audit (critical/high policy)
-        defaults:
-          run:
-            working-directory: frontend
         run: |
           npm ci
           npm audit --audit-level=high
