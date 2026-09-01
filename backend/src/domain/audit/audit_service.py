@@ -143,3 +143,46 @@ class AuditService:
             return True
         owner = row.metadata_json.get("ownerUserId")
         return isinstance(owner, str) and owner == str(user_id)
+
+    async def get_entry(
+        self,
+        *,
+        entry_id: uuid.UUID,
+        actor_user_id: uuid.UUID,
+    ) -> AuditEntryDetails | None:
+        """Direct single-entry lookup with the same visibility rules as
+        :meth:`query_entries`.
+
+        Returns ``None`` when the entry does not exist OR is not visible
+        to ``actor_user_id``. The caller maps a ``None`` result to a
+        404 ``NotFoundError`` so the API does not leak existence of
+        cross-tenant entries.
+
+        Per SRS Ch5 §12, every successful audit-log access also records
+        an ``AUDIT_LOG_ACCESSED`` entry — we do so here so the single-
+        entry endpoint matches the list endpoint's self-logging
+        contract.
+        """
+        row = await self._session.get(AuditLogEntry, entry_id)
+        if row is None or not self._visible_to(row, actor_user_id):
+            return None
+        await self.record(
+            action_code="AUDIT_LOG_ACCESSED",
+            entity_type="audit_log",
+            entity_id=actor_user_id,
+            metadata_json={
+                "filters": {
+                    "entryId": str(entry_id),
+                }
+            },
+            actor_user_id=actor_user_id,
+        )
+        return AuditEntryDetails(
+            id=row.id,
+            actor_user_id=row.actor_user_id,
+            action_code=row.action_code,
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            metadata_json=dict(row.metadata_json),
+            occurred_at=row.occurred_at,
+        )

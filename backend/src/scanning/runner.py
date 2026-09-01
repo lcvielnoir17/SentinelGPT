@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from src.domain.errors import ScannerExecutionBlockedError
+from src.domain.errors import EgressDeniedError, ScannerExecutionBlockedError
 from src.domain.scanning.egress import ScanNetworkContext
 from src.domain.scanning.http_contract import HttpLimits, ScanCancellation
 from src.scanning.engines.base import require_scan_context
@@ -113,7 +113,14 @@ class SandboxedScanExecutor:
         """Execute the chain end-to-end for one scan attempt."""
         binding, sandbox = self.prepare(hostname, target_id=target_id, now=now)
         try:
-            context = ScanNetworkContext.create(binding)
+            # Pin the validated primary address before handing the context to
+            # the engine: ``ConnectionTarget.for_context`` refuses an unpinned
+            # binding, and the redirect-only pin path in the transport is
+            # never reached for the first logical request.
+            if not binding.addresses:
+                raise EgressDeniedError()
+            pinned_binding = binding.with_pinned(binding.addresses[0])
+            context = ScanNetworkContext.create(pinned_binding)
             require_scan_context(context)
             if engine is None or not self._enable_execution:
                 # Execution gate (ADR-0007): closed by default even now that

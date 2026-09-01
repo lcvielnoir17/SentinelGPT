@@ -1,0 +1,56 @@
+# =============================================================================
+# SentinelGPT — LOCAL ACCEPTANCE OVERLAY
+# Not part of the committed configuration: used only to start the worker tier
+# and enable the SCANNER_EXECUTOR gate during the live acceptance run.
+# Compose: docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.local.yml up -d --build
+#
+# Worker specifics:
+#   * Builds from infra/docker/worker.Dockerfile so the docker CLI is present
+#     and the host daemon socket can be mounted (ADR-0003 orchestration).
+#   * Mounts /var/run/docker.sock read/write so the worker can drive the
+#     sentinelgpt/scanner-sandbox:latest runtime. The worker process runs as
+#     uid 1000 (appuser) and joins the docker group via the bind-mount's
+#     group ownership on Docker Desktop (gid 0).
+#   * Healthcheck runs celery inspect ping against the live broker so the
+#     "unhealthy" container flag no longer reflects a stale API healthcheck
+#     (curl /healthz is meaningless for a Celery worker).
+# =============================================================================
+
+services:
+  api:
+    environment:
+      - SCANNER_EXECUTION_ENABLED=true
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/worker.Dockerfile
+    image: sentinelgpt-worker
+    container_name: sentinelgpt-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-local}
+      - DEBUG=${DEBUG:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/2
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "python -m celery -A src.workers.celery_app:celery_app inspect ping -t 5 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    networks:
+      - sentinelgpt-internal

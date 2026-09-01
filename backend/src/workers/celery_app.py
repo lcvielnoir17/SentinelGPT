@@ -29,12 +29,70 @@ Security notes:
 from __future__ import annotations
 
 from celery import Celery
+from celery.signals import (
+    task_postrun,
+    worker_process_init,
+    worker_process_shutdown,
+)
 
 from src.config.constants import CELERY_QUEUE_SCAN
 from src.config.settings import get_settings
 from src.infrastructure.logging.logger import configure_logging, get_logger
 
 logger = get_logger(__name__)
+
+
+def _reset_db_engine_state() -> None:
+    """Drop the cached engine/sessionmaker so the next task re-initialises
+    them lazily against the current event loop.
+
+    Module-level singletons in ``src.infrastructure.database.connection``
+    are reused across ``asyncio.run`` invocations inside a single Celery
+    child process. Each ``asyncio.run`` creates (and closes) its own event
+    loop; the asyncpg connections the engine cached during the previous
+    loop remain in the pool bound to that defunct loop. The next task
+    either raises ``RuntimeError: ... attached to a different loop`` (best
+    case) or ``InterfaceError: another operation is in progress`` (race
+    case), which the domain path catches and the worker then incorrectly
+    tries to mark REJECTED — but the connection is already dead, so the
+    scan is left stranded in QUEUED.
+    """
+    try:
+        from src.infrastructure.database import connection as db_connection
+
+        db_connection._engine = None  # type: ignore[attr-defined]
+        db_connection._sessionmaker = None  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - best-effort hygiene
+        logger.warning("worker_db_engine_reset_failed", exc_info=True)
+
+
+@worker_process_init.connect
+def _reset_db_engine_in_child(**_kwargs: object) -> None:
+    """Discard any DB engine inherited from the parent process.
+
+    Under Celery prefork, child processes inherit the parent's pool —
+    including asyncpg connections opened against the parent's (now absent)
+    loop. Forcing a fresh lazy init in each child binds new connections
+    to the child's current loop.
+    """
+    _reset_db_engine_state()
+
+
+@task_postrun.connect
+def _reset_db_engine_after_task(
+    task_id: str,  # noqa: ARG001
+    task: object,  # noqa: ARG001
+    **kwargs: object,
+) -> None:
+    """Discard the cached engine after every task so the next task in
+    the same child process re-opens it against a fresh event loop."""
+    _reset_db_engine_state()
+
+
+@worker_process_shutdown.connect
+def _dispose_db_engine_on_shutdown(**_kwargs: object) -> None:
+    """Cleanly clear the DB engine on worker shutdown."""
+    _reset_db_engine_state()
 
 
 def _build_celery() -> Celery:

@@ -59,3 +59,25 @@ see the header of either lock file for the exact command.
 - Local dev: `docker compose up` (loopback-only ports, debug/hot-reload).
 - Public demo: `docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build`
   (Caddy TLS edge; Postgres/Redis never published).
+
+### Local dev with the scanner sandbox
+
+The base `docker compose up` does not start the worker or the scanner
+sandbox. To reproduce the full live acceptance (QUEUE → RUNNING →
+`REPORT_READY_DEGRADED` against a controlled test target, with the worker
+container reporting `healthy` against its Celery broker) follow
+`docs/operations/local-dev-with-scanner.md`. The exact recipe:
+
+```bash
+cp .env.example .env
+./scripts/build-scanner-sandbox-image.sh       # Linux/macOS; on Windows use scripts\build-scanner-sandbox-image.ps1
+docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.local.yml up -d --build
+docker compose exec api alembic upgrade head
+.venv/Scripts/python.exe scripts/e2e_scan_workflow.py   # or the docker exec equivalent
+```
+
+The `local` overlay adds the worker (built from
+`infra/docker/worker.Dockerfile`), mounts `/var/run/docker.sock`,
+enables `SCANNER_EXECUTION_ENABLED`, and replaces the inherited API
+healthcheck with a `celery inspect ping` so the worker container reports
+`healthy`.

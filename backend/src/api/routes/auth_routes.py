@@ -11,6 +11,15 @@ Implements the Chapter 2 Section 9 / Chapter 11 Section 8 session invariants:
   token family (reuse detection, Chapter 5 Section 2) and answers 401.
 * ``/auth/logout`` revokes the presented session and clears both cookies.
 
+The ``Secure`` cookie attribute is REQUIRED in production but breaks the
+local HTTP dev loop (browsers / ``httpx.AsyncClient`` refuse to store
+Secure cookies over a non-HTTPS connection). The attribute is therefore
+gated on the runtime environment: ``staging``/``production`` set it,
+``local``/``test`` omit it. The chapter 2 §9 invariant — that deployed
+environments NEVER relax this — is preserved by the settings validator
+and the docker-compose production overlay, which always run in
+``production`` with the attribute on.
+
 MFA enrollment/challenge, lockout, and login audit logging remain outstanding
 Phase 1 Auth Service deliverables.
 """
@@ -25,8 +34,10 @@ from fastapi import APIRouter, Depends, Header, Request, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import ACCESS_TOKEN_COOKIE
+from src.api.dependencies import ACCESS_TOKEN_COOKIE, CurrentUser
 from src.config.constants import (
+    ENV_PRODUCTION,
+    ENV_STAGING,
     REFRESH_COOKIE_PATH,
     REFRESH_TOKEN_COOKIE,
 )
@@ -52,6 +63,17 @@ def _read_refresh_cookie(request: Request) -> str | None:
     return request.cookies.get(REFRESH_TOKEN_COOKIE)
 
 
+def _cookie_secure_flag(settings: Settings) -> bool:
+    """``Secure`` is on for deployed environments, off for local/test.
+
+    The dev/test loops use plain HTTP; the ``Secure`` attribute would
+    cause browsers and ``httpx.AsyncClient`` to silently drop the
+    cookie, breaking the auth flow. Production / staging always run
+    behind TLS, so the attribute is always set there.
+    """
+    return settings.environment in (ENV_STAGING, ENV_PRODUCTION)
+
+
 def _issue_session(
     response: Response,
     session: AsyncSession,
@@ -62,7 +84,8 @@ def _issue_session(
 
     Access JWT: short-lived, path=/. Refresh credential: opaque, server-side
     tracked (hash only persisted), scoped to /api/v1/auth. Both HttpOnly;
-    Secure; SameSite=Strict (Ch2 §9).
+    SameSite=Strict. ``Secure`` is set in staging/production only
+    (see :func:`_cookie_secure_flag`).
     """
     refresh_service = RefreshService(session, settings.refresh_token_expire_days)
     raw_refresh, _ = refresh_service.issue_family(account.id)
@@ -72,12 +95,13 @@ def _issue_session(
         algorithm=settings.jwt_algorithm,
         expires_in_minutes=settings.access_token_expire_minutes,
     )
+    cookie_secure = _cookie_secure_flag(settings)
     response.set_cookie(
         key=ACCESS_TOKEN_COOKIE,
         value=access,
         max_age=settings.access_token_expire_minutes * 60,
         httponly=True,
-        secure=True,
+        secure=cookie_secure,
         samesite="strict",
         path="/",
     )
@@ -86,27 +110,28 @@ def _issue_session(
         value=raw_refresh,
         max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
         httponly=True,
-        secure=True,
+        secure=cookie_secure,
         samesite="strict",
         path=REFRESH_COOKIE_PATH,
     )
     return raw_refresh
 
 
-def _clear_auth_cookies(response: Response) -> None:
+def _clear_auth_cookies(response: Response, settings: Settings) -> None:
     """Clear both cookies with attributes matching how they were set."""
+    cookie_secure = _cookie_secure_flag(settings)
     response.delete_cookie(
         key=ACCESS_TOKEN_COOKIE,
         path="/",
         httponly=True,
-        secure=True,
+        secure=cookie_secure,
         samesite="strict",
     )
     response.delete_cookie(
         key=REFRESH_TOKEN_COOKIE,
         path=REFRESH_COOKIE_PATH,
         httponly=True,
-        secure=True,
+        secure=cookie_secure,
         samesite="strict",
     )
 
@@ -202,6 +227,22 @@ async def login(payload: LoginRequest, session: SessionDep, response: Response) 
     )
 
 
+@router.get(
+    "/me",
+    response_model=UserInfo,
+    summary="Return the authenticated user (session restore probe)",
+    description=(
+        "Cheap identity probe used by the SPA on page load to restore the "
+        "in-memory user from the still-attached HttpOnly access cookie. "
+        "Returns 200 with the same UserInfo the login response uses; "
+        "returns the standard 401 UNAUTHENTICATED envelope when no valid "
+        "session is attached. No token material is ever returned in the body."
+    ),
+)
+async def get_me(current_user: CurrentUser) -> UserInfo:
+    return _to_user_info(current_user)
+
+
 @router.post(
     "/refresh",
     response_model=LoginResponse,
@@ -245,12 +286,13 @@ async def refresh_session(
         algorithm=settings.jwt_algorithm,
         expires_in_minutes=settings.access_token_expire_minutes,
     )
+    cookie_secure = _cookie_secure_flag(settings)
     response.set_cookie(
         key=ACCESS_TOKEN_COOKIE,
         value=access,
         max_age=settings.access_token_expire_minutes * 60,
         httponly=True,
-        secure=True,
+        secure=cookie_secure,
         samesite="strict",
         path="/",
     )
@@ -259,7 +301,7 @@ async def refresh_session(
         value=rotated.raw_token,
         max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
         httponly=True,
-        secure=True,
+        secure=cookie_secure,
         samesite="strict",
         path=REFRESH_COOKIE_PATH,
     )
@@ -284,6 +326,7 @@ async def logout(
     x_refresh_request: Annotated[str | None, Header()] = None,
 ) -> None:
     _require_refresh_csrf_header(x_refresh_request)
-    refresh_service = RefreshService(session, get_settings().refresh_token_expire_days)
+    settings = get_settings()
+    refresh_service = RefreshService(session, settings.refresh_token_expire_days)
     await refresh_service.logout(_read_refresh_cookie(request))
-    _clear_auth_cookies(response)
+    _clear_auth_cookies(response, settings)

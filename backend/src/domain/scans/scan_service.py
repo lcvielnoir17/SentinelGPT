@@ -453,6 +453,7 @@ class ScanService:
                     "from": SCAN_STATUS_QUEUED_CODE,
                     "to": SCAN_STATUS_REJECTED_CODE,
                     "reason": "authorization attestation no longer valid",
+                    "ownerUserId": str(scan.initiated_by_user_id),
                 },
                 actor_user_id=None,
             )
@@ -516,6 +517,7 @@ class ScanService:
                 metadata_json={
                     "from": SCAN_STATUS_RUNNING_CODE,
                     "to": "EXECUTION_SUCCEEDED",
+                    "ownerUserId": str(scan.initiated_by_user_id),
                 },
                 occurred_at=datetime.now(UTC),
             )
@@ -534,6 +536,7 @@ class ScanService:
                     "from": SCAN_STATUS_RUNNING_CODE,
                     "to": SCAN_STATUS_REJECTED_CODE,
                     "reason": type(exc).__name__,
+                    "ownerUserId": str(scan.initiated_by_user_id),
                 },
                 occurred_at=datetime.now(UTC),
             )

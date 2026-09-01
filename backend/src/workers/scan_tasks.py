@@ -141,12 +141,26 @@ async def _run_scan_job(scan_id: uuid.UUID) -> None:
 
 
 async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:
-    """Move a stuck scan to REJECTED when the worker cannot recover."""
+    """Move a stuck scan to REJECTED when the worker cannot recover.
+
+    A worker failure may occur either before the scan is claimed
+    (QUEUED) or after the domain service has transitioned it to
+    RUNNING. The original implementation required QUEUED, which stranded
+    scans in RUNNING forever whenever the worker's exception path ran
+    after the QUEUED→RUNNING claim. This implementation tries each
+    non-terminal post-claim state in order and is a no-op if the scan is
+    already terminal (REPORT_READY*, REJECTED, CANCELLED), so the worker
+    remains idempotent on retry.
+    """
     from datetime import UTC, datetime
 
     from sqlalchemy import select
 
-    from src.config.constants import SCAN_STATUS_QUEUED, SCAN_STATUS_REJECTED
+    from src.config.constants import (
+        SCAN_STATUS_QUEUED,
+        SCAN_STATUS_REJECTED,
+        SCAN_STATUS_RUNNING,
+    )
     from src.domain.audit.audit_service import AuditService
     from src.infrastructure.database.models import Scan, ScanEngine
     from src.infrastructure.database.repositories.scan_repository import (
@@ -161,13 +175,31 @@ async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:
         if scan is None:
             return
         status_ids = await repository.status_ids_by_code()
-        claimed = await repository.try_transition(
-            scan.id,
-            from_status_id=status_ids[SCAN_STATUS_QUEUED],
-            to_status_id=status_ids[SCAN_STATUS_REJECTED],
-            set_completed_at=datetime.now(UTC),
-        )
-        if claimed:
+
+        # Try the post-claim state first (the failure path that used to
+        # strand scans in RUNNING), then fall back to the pre-claim
+        # QUEUED state so the original worker gate is preserved exactly.
+        # If neither matches, the scan is already terminal or in another
+        # non-terminal state managed by the domain path; the optimistic
+        # guard makes this naturally idempotent on retry.
+        candidate_attempts: list[tuple[str, int]] = [
+            (SCAN_STATUS_RUNNING, status_ids[SCAN_STATUS_RUNNING]),
+            (SCAN_STATUS_QUEUED, status_ids[SCAN_STATUS_QUEUED]),
+        ]
+
+        claimed_from_code: str | None = None
+        for from_code, from_status_id in candidate_attempts:
+            moved = await repository.try_transition(
+                scan.id,
+                from_status_id=from_status_id,
+                to_status_id=status_ids[SCAN_STATUS_REJECTED],
+                set_completed_at=datetime.now(UTC),
+            )
+            if moved:
+                claimed_from_code = from_code
+                break
+
+        if claimed_from_code is not None:
             engine_id_row = (
                 await session.execute(
                     select(ScanEngine.id).where(ScanEngine.code == "headers-analyzer")
@@ -192,9 +224,10 @@ async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:
                 entity_type="scan",
                 entity_id=scan.id,
                 metadata_json={
-                    "from": SCAN_STATUS_QUEUED,
+                    "from": claimed_from_code,
                     "to": SCAN_STATUS_REJECTED,
                     "reason": f"worker_crashed:{reason}",
+                    "ownerUserId": str(scan.initiated_by_user_id),
                 },
             )
         await session.commit()

@@ -154,6 +154,24 @@ def test_engine_runs_inside_established_sandbox_and_cleanup_happens() -> None:
     assert services.limits.max_redirects == 10  # type: ignore[attr-defined]
 
 
+def test_engine_receives_pinned_binding_for_first_logical_request() -> None:
+    """Regression: ConnectionTarget.for_context refuses an unpinned binding.
+
+    The production pipeline (``DefaultScanPipeline.run``) drives
+    ``executor.execute_scan(...)`` which must hand the engine a context whose
+    binding has its primary address pinned; otherwise the first
+    ``ConnectionTarget.for_context`` call raises EgressDeniedError and the
+    scan rejects despite an established sandbox.
+    """
+    engine = RecordingEngine()
+    executor, _ = _executor()
+    executor.execute_scan("target.example", engine=engine)  # type: ignore[arg-type]
+
+    (context, _services) = engine.calls[0]
+    assert context.binding.pinned_address is not None  # type: ignore[attr-defined]
+    assert context.binding.pinned_address == context.binding.addresses[0]  # type: ignore[attr-defined]
+
+
 def test_engine_services_http_transport_is_real_and_fail_closed() -> None:
     """Phase 4: the factory yields the sandbox-bound transport, which
     refuses to operate once the attempt's sandbox has been torn down."""

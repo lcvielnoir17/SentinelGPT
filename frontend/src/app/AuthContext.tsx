@@ -1,30 +1,87 @@
 /**
  * Authentication state provider.
  *
- * PHASE 0 BEHAVIOR (intentionally temporary, per SRS Chapter 15 Section 2):
- * the authenticated identity is held in memory only. The backend's Phase 0
- * login endpoint performs REAL credential verification but issues no token
- * material — consistent with the v3 invariant that JavaScript never receives
- * or stores JWTs. Phase 1 replaces this context with server-verified
- * HttpOnly-cookie sessions restored via GET /auth/me on page load.
+ * Phase 1 behavior (SRS Chapter 5, Section 2):
+ *   - Login / register POST sets two HttpOnly cookies (access JWT and
+ *     refresh credential). Token material is never visible to JavaScript.
+ *   - The in-memory `user` is the only authoritative client-side identity
+ *     signal; there is no localStorage / sessionStorage round-trip.
+ *   - On startup the SPA issues a single bootstrap `GET /auth/me` to
+ *     restore the in-memory user from the still-attached HttpOnly access
+ *     cookie. ``bootstrap === "pending"`` while the probe is in flight
+ *     so ``RequireAuth`` can render a placeholder instead of redirecting
+ *     to /login (which would otherwise flash a 401 → /login round-trip
+ *     on every page load).
+ *   - Sign-out calls `POST /auth/logout` to revoke the refresh credential
+ *     server-side and clear both cookies (the `X-Refresh-Request` header
+ *     is a CSRF mitigation per SRS Ch2 §9).
+ *   - Any 401 response from the API after bootstrap completes triggers an
+ *     automatic sign-out and a redirect to `/login` so an expired access
+ *     JWT never strands the user. The 401 handler is gated on bootstrap
+ *     completion: during the bootstrap probe itself, a 401 is treated as
+ *     "no active session" (not a navigation event).
  */
 
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import type { UserAccount } from "../features/auth/api/authApi";
-import { login as apiLogin, register as apiRegister } from "../features/auth/api/authApi";
+import { login as apiLogin, logout as apiLogout, me as apiMe, register as apiRegister } from "../features/auth/api/authApi";
+import { ApiError, setUnauthorizedHandler } from "../services/apiClient";
+
+type BootstrapState = "pending" | "ready";
 
 interface AuthContextValue {
   user: UserAccount | null;
+  bootstrap: BootstrapState;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserAccount | null>(null);
+  const [bootstrap, setBootstrap] = useState<BootstrapState>("pending");
+  const navigate = useNavigate();
+
+  // One-shot session restore on app mount. The probe is the only
+  // request that is allowed to happen while bootstrap is "pending":
+  // every other auth-aware UI waits on the bootstrap state so a valid
+  // session never briefly renders the login screen.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const account = await apiMe();
+        if (!cancelled) {
+          setUser(account);
+        }
+      } catch (err) {
+        // 401 (or any other failure) is treated as "no active session".
+        // We deliberately do NOT navigate from here — the
+        // setUnauthorizedHandler below gates navigation on bootstrap
+        // completion so the bootstrap response itself can't cause a
+        // /login flash.
+        if (!cancelled) {
+          setUser(null);
+        }
+        if (!(err instanceof ApiError)) {
+          // Network / unexpected error: log nothing in the console; the
+          // bootstrap state is allowed to finish so the UI can render
+          // the login screen via RequireAuth's natural redirect.
+        }
+      } finally {
+        if (!cancelled) {
+          setBootstrap("ready");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     const response = await apiLogin(email, password);
@@ -34,7 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = useCallback(
     async (email: string, password: string) => {
       await apiRegister(email, password);
-      // Auto-login after successful registration so the Phase 0 flow
+      // Auto-login after successful registration so the flow
       // ("register → land on dashboard") works in one pass.
       const response = await apiLogin(email, password);
       setUser(response.user);
@@ -42,14 +99,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const logout = useCallback(() => {
-    // PHASE 0: nothing to revoke yet; Phase 1 adds POST /auth/logout.
+  const logout = useCallback(async () => {
+    // Best-effort server-side revocation; even if it fails (e.g. the
+    // access cookie has already expired) the in-memory state is cleared
+    // and the user is bounced to /login.
+    try {
+      await apiLogout();
+    } catch {
+      // Swallow — local sign-out proceeds regardless.
+    }
     setUser(null);
   }, []);
 
+  // Register the global 401 → "go to /login" handler so an expired access
+  // JWT never strands the user on a page that can't reach the API. The
+  // handler is a no-op while bootstrap is in flight: a 401 during the
+  // bootstrap probe means "no active session", not "active session that
+  // just expired", so we let the in-flight probe resolve naturally and
+  // RequireAuth handles the resulting user === null state.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      if (bootstrap !== "ready") return;
+      setUser(null);
+      navigate("/login", { replace: true });
+    });
+    return () => setUnauthorizedHandler(null);
+  }, [navigate, bootstrap]);
+
   const value = useMemo<AuthContextValue>(
-    () => ({ user, login, register, logout }),
-    [user, login, register, logout],
+    () => ({ user, bootstrap, login, register, logout }),
+    [user, bootstrap, login, register, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

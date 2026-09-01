@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser  # noqa: TC001 - FastAPI runtime
@@ -65,19 +65,39 @@ class FindingResponse(BaseModel):
     evidence: str
     location: str
     recommendation: str
-    created_at: str = Field(serialization_alias="createdAt")
+    created_at: str = Field(
+        validation_alias=AliasChoices("createdAt", "created_at"),
+        serialization_alias="createdAt",
+    )
 
 
 class AssessmentResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     available: bool
     provider: str
     model: str
-    prompt_schema_version: str = Field(serialization_alias="promptSchemaVersion")
-    output_schema_version: str = Field(serialization_alias="outputSchemaVersion")
-    failure_kind: str | None = Field(serialization_alias="failureKind")
-    unsupported_claim_count: int = Field(serialization_alias="unsupportedClaimCount")
+    prompt_schema_version: str = Field(
+        validation_alias=AliasChoices("promptSchemaVersion", "prompt_schema_version"),
+        serialization_alias="promptSchemaVersion",
+    )
+    output_schema_version: str = Field(
+        validation_alias=AliasChoices("outputSchemaVersion", "output_schema_version"),
+        serialization_alias="outputSchemaVersion",
+    )
+    failure_kind: str | None = Field(
+        validation_alias=AliasChoices("failureKind", "failure_kind"),
+        serialization_alias="failureKind",
+    )
+    unsupported_claim_count: int = Field(
+        validation_alias=AliasChoices("unsupportedClaimCount", "unsupported_claim_count"),
+        serialization_alias="unsupportedClaimCount",
+    )
     payload: dict[str, Any]
-    created_at: str = Field(serialization_alias="createdAt")
+    created_at: str = Field(
+        validation_alias=AliasChoices("createdAt", "created_at"),
+        serialization_alias="createdAt",
+    )
 
 
 def _to_response(details: ScanDetails) -> ScanResponse:

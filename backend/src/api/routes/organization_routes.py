@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser  # noqa: TC001 - FastAPI runtime
@@ -38,7 +38,10 @@ class OrganizationResponse(BaseModel):
 
 
 class AddMemberRequest(BaseModel):
-    user_id: uuid.UUID = Field(serialization_alias="userId")
+    user_id: uuid.UUID = Field(
+        validation_alias=AliasChoices("userId", "user_id"),
+        serialization_alias="userId",
+    )
     role: str = Field(pattern="^(ADMIN|MEMBER)$")
 
 

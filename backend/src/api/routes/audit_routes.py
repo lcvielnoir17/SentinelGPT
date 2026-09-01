@@ -78,10 +78,20 @@ async def get_audit_entry(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     current_user: CurrentUser,
 ) -> AuditEntryResponse:
-    entries = await AuditService(session).query_entries(actor_user_id=current_user.id, limit=200)
-    for entry in entries:
-        if entry.id == entry_id:
-            return _to_response(entry)
+    """Direct single-entry lookup.
+
+    The previous implementation pulled the newest 200 entries and
+    searched them in Python, so a valid entry older than that window
+    was unreachable. ``AuditService.get_entry`` resolves by id and
+    applies the same v1 fail-closed visibility rule used by
+    ``query_entries``.
+    """
     from src.domain.errors import NotFoundError
 
-    raise NotFoundError()
+    entry = await AuditService(session).get_entry(
+        entry_id=entry_id,
+        actor_user_id=current_user.id,
+    )
+    if entry is None:
+        raise NotFoundError()
+    return _to_response(entry)

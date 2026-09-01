@@ -1,6 +1,7 @@
 """Application settings configuration using Pydantic Settings."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -16,11 +17,28 @@ DEVELOPMENT_INSECURE_JWT_SECRET = (
 MIN_PRODUCTION_SECRET_LENGTH = 32
 
 
+def _project_root_env_file() -> str | None:
+    """Locate the project-root ``.env`` regardless of process CWD.
+
+    When uvicorn is started from ``backend/`` the relative ``.env`` is
+    unreachable; the project keeps its single source of truth at
+    ``<repo>/.env``. We walk upward from this file until a ``.env`` is
+    found, so the same code works whether the process is launched from
+    ``SentinelGPT/`` or ``SentinelGPT/backend/``.
+    """
+    here = Path(__file__).resolve()
+    for parent in (here, *here.parents):
+        candidate = parent / ".env"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 class Settings(BaseSettings):
     """SentinelGPT Application Settings."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_project_root_env_file() or ".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

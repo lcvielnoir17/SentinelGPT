@@ -27,6 +27,13 @@ Thumbs.db
 
 # Logs
 *.log
+# Captured stdout/stderr from local ad-hoc process runs (api/celery)
+api.run.err
+api.run.out
+celery.run.err
+celery.run.out
+# Ad-hoc live-E2E scratch contexts
+.e2e_*.json
 
 # Test/coverage
 .coverage
