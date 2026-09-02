@@ -251,11 +251,12 @@ async def test_append_message_updates_count_and_ordering(store) -> None:
     conversation = _conversation(UID_A)
     await store.create_conversation(conversation)
     base = datetime.now(UTC)
-    first = ConversationMessage(
-        id=new_message_id(), role="user", content="first", created_at=base
-    )
+    first = ConversationMessage(id=new_message_id(), role="user", content="first", created_at=base)
     second = ConversationMessage(
-        id=new_message_id(), role="assistant", content="second", created_at=base + timedelta(seconds=1)
+        id=new_message_id(),
+        role="assistant",
+        content="second",
+        created_at=base + timedelta(seconds=1),
     )
     await store.append_message(UID_A, conversation.id, first)
     await store.append_message(UID_A, conversation.id, second)

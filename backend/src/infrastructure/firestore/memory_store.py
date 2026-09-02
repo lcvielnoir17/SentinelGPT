@@ -12,13 +12,8 @@ Firestore store (ADR-0011).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from src.domain.conversations.models import Conversation, ConversationMessage
 from src.domain.conversations.store import ConversationNotFoundError
-
-if TYPE_CHECKING:
-    import uuid
 
 
 class InMemoryConversationStore:
@@ -41,9 +36,7 @@ class InMemoryConversationStore:
     ) -> Conversation | None:
         return self._conversations.get(firebase_uid, {}).get(conversation_id)
 
-    async def list_conversations(
-        self, firebase_uid: str, *, limit: int = 50
-    ) -> list[Conversation]:
+    async def list_conversations(self, firebase_uid: str, *, limit: int = 50) -> list[Conversation]:
         scoped = self._conversations.get(firebase_uid, {})
         ordered = sorted(scoped.values(), key=lambda c: c.updated_at, reverse=True)
         return ordered[:limit]
@@ -75,7 +68,15 @@ class InMemoryConversationStore:
             updated_at=message.created_at,
         )
         self._conversations[firebase_uid][conversation_id] = updated
-        self._messages[firebase_uid][conversation_id][message.id] = message
+        # Sequence = prior count + 1: the canonical, monotonic turn order.
+        sequenced = ConversationMessage(
+            id=message.id,
+            role=message.role,
+            content=message.content,
+            created_at=message.created_at,
+            sequence=updated.message_count,
+        )
+        self._messages[firebase_uid][conversation_id][message.id] = sequenced
 
     async def list_messages(
         self, firebase_uid: str, conversation_id: str, *, limit: int = 200
@@ -83,7 +84,10 @@ class InMemoryConversationStore:
         if await self.get_conversation(firebase_uid, conversation_id) is None:
             raise ConversationNotFoundError()
         scoped = self._messages.get(firebase_uid, {}).get(conversation_id, {})
-        ordered = sorted(scoped.values(), key=lambda m: (m.created_at, m.id))
+        ordered = sorted(
+            scoped.values(),
+            key=lambda m: (m.sequence if m.sequence is not None else 0, m.created_at, m.id),
+        )
         return ordered[:limit]
 
     async def count_conversations(self, firebase_uid: str) -> int:

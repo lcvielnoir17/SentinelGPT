@@ -46,9 +46,7 @@ class ConversationStore(Protocol):
         """Load one conversation from the user's scope (None if absent)."""
         ...
 
-    async def list_conversations(
-        self, firebase_uid: str, *, limit: int = 50
-    ) -> list[Conversation]:
+    async def list_conversations(self, firebase_uid: str, *, limit: int = 50) -> list[Conversation]:
         """List the user's conversations, most recently active first."""
         ...
 

@@ -4,24 +4,41 @@ Resolves the current authenticated user from the HttpOnly ``accessToken``
 cookie per the Chapter 2 Section 9 invariant — no Authorization header, no
 token material readable by client JavaScript. Missing/invalid credentials
 raise NotAuthenticatedError (401 UNAUTHENTICATED envelope).
+
+Also hosts the conversation-stack providers (ADR-0011/0012): the
+user-scoped ConversationStore (Firestore in production, in-memory without
+Google credentials), the optional Gemini conversation agent, and the
+per-user rate limiter. Each is a FastAPI dependency so tests override them
+cleanly via ``dependency_overrides``.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from functools import lru_cache
+from typing import Annotated, Any
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.constants import ACCESS_TOKEN_COOKIE
 from src.config.settings import get_settings
+from src.domain.conversations.rate_limit import RedisFixedWindowLimiter
+from src.domain.conversations.store import ConversationStore
 from src.domain.errors import NotAuthenticatedError
 from src.domain.users.token_service import decode_access_token
 from src.domain.users.user_service import UserAccount
 from src.infrastructure.database.connection import get_db_session
 from src.infrastructure.database.repositories.user_repository import UserRepository
 
-__all__ = ["ACCESS_TOKEN_COOKIE", "CurrentUser", "get_current_user"]
+__all__ = [
+    "ACCESS_TOKEN_COOKIE",
+    "ConversationStoreDep",
+    "CurrentUser",
+    "get_conversation_agent",
+    "get_conversation_store",
+    "get_current_user",
+    "get_rate_limiter",
+]
 
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
@@ -51,3 +68,63 @@ async def get_current_user(request: Request, session: SessionDep) -> UserAccount
 
 
 CurrentUser = Annotated[UserAccount, Depends(get_current_user)]
+
+
+# --------------------------------------------------------------------- #
+# Conversation stack providers                                          #
+# --------------------------------------------------------------------- #
+
+
+@lru_cache
+def _firestore_store(project_id: str, database_id: str) -> ConversationStore:
+    """One Firestore client per (project, database) per process."""
+    del project_id, database_id  # cache key only; from_settings reads settings
+    from src.infrastructure.firestore.conversation_store import FirestoreConversationStore
+
+    return FirestoreConversationStore.from_settings(get_settings())
+
+
+_memory_store: ConversationStore | None = None
+
+
+def get_conversation_store() -> ConversationStore:
+    """Production wiring: Firestore when configured, in-memory otherwise."""
+    global _memory_store
+    settings = get_settings()
+    if settings.firestore_conversations_enabled and settings.firebase_project_id:
+        return _firestore_store(settings.firebase_project_id, settings.firestore_database_id)
+    # Local development without Google credentials: durable-less but
+    # behaviorally identical storage (documented in ADR-0011).
+    if _memory_store is None:
+        from src.infrastructure.firestore.memory_store import InMemoryConversationStore
+
+        _memory_store = InMemoryConversationStore()
+    return _memory_store
+
+
+def get_conversation_agent() -> Any | None:
+    """The Gemini multi-turn agent, or None when no API key is configured."""
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        return None
+    try:
+        from src.infrastructure.ai.gemini_chat_agent import GeminiConversationAgent
+
+        return GeminiConversationAgent(
+            api_key=settings.gemini_api_key, model=settings.gemini_flash_model
+        )
+    except Exception:  # noqa: BLE001 - AI must degrade, never block requests
+        return None
+
+
+def get_rate_limiter() -> RedisFixedWindowLimiter:
+    """Redis fixed-window limiter (fails open when Redis is unreachable)."""
+    from src.infrastructure.cache.redis_client import get_redis_client
+
+    settings = get_settings()
+    return RedisFixedWindowLimiter(
+        get_redis_client(), limit=settings.conversation_rate_limit_per_minute
+    )
+
+
+ConversationStoreDep = Annotated[ConversationStore, Depends(get_conversation_store)]

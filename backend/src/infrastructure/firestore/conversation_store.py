@@ -110,8 +110,13 @@ class FirestoreConversationStore:
         )
 
     @staticmethod
-    def _message_to_firestore(message: ConversationMessage) -> dict[str, Any]:
-        return {"role": message.role, "content": message.content, "createdAt": message.created_at}
+    def _message_to_firestore(message: ConversationMessage, sequence: int) -> dict[str, Any]:
+        return {
+            "role": message.role,
+            "content": message.content,
+            "createdAt": message.created_at,
+            "seq": sequence,
+        }
 
     @staticmethod
     def _message_from_firestore(message_id: str, data: dict[str, Any]) -> ConversationMessage:
@@ -120,6 +125,7 @@ class FirestoreConversationStore:
             role=data["role"],
             content=data["content"],
             created_at=_as_datetime(data.get("createdAt")),
+            sequence=int(data["seq"]) if data.get("seq") is not None else None,
         )
 
     # ------------------------------------------------------------------ #
@@ -134,16 +140,12 @@ class FirestoreConversationStore:
     async def get_conversation(
         self, firebase_uid: str, conversation_id: str
     ) -> Conversation | None:
-        snapshot = await self._conversation_ref(
-            self._client, firebase_uid, conversation_id
-        ).get()
+        snapshot = await self._conversation_ref(self._client, firebase_uid, conversation_id).get()
         if not snapshot.exists:
             return None
         return self._from_firestore(snapshot.id, snapshot.to_dict() or {})
 
-    async def list_conversations(
-        self, firebase_uid: str, *, limit: int = 50
-    ) -> list[Conversation]:
+    async def list_conversations(self, firebase_uid: str, *, limit: int = 50) -> list[Conversation]:
         query = (
             self._client.collection("users")
             .document(firebase_uid)
@@ -180,15 +182,16 @@ class FirestoreConversationStore:
         snapshot = await conversation_ref.get()
         if not snapshot.exists:
             raise ConversationNotFoundError()
+        next_seq = int(snapshot.to_dict().get("messageCount", 0) or 0) + 1
         batch = self._client.batch()
         batch.set(
             self._messages_ref(self._client, firebase_uid, conversation_id).document(message.id),
-            self._message_to_firestore(message),
+            self._message_to_firestore(message, next_seq),
         )
         batch.update(
             conversation_ref,
             {
-                "messageCount": int(snapshot.to_dict().get("messageCount", 0) or 0) + 1,
+                "messageCount": next_seq,
                 "updatedAt": message.created_at,
             },
         )
@@ -205,7 +208,7 @@ class FirestoreConversationStore:
             raise ConversationNotFoundError()
         query = (
             self._messages_ref(self._client, firebase_uid, conversation_id)
-            .order_by("createdAt", direction="ASCENDING")
+            .order_by("seq", direction="ASCENDING")
             .limit(min(limit, MAX_MESSAGES_PER_CONVERSATION))
         )
         messages: list[ConversationMessage] = []

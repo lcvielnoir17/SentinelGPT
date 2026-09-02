@@ -38,12 +38,18 @@ def _utc_now() -> datetime:
 
 @dataclass(frozen=True)
 class ConversationMessage:
-    """One turn of the multi-turn conversation."""
+    """One turn of the multi-turn conversation.
+
+    ``sequence`` is assigned by the store on append and defines the
+    canonical turn ordering (timestamps alone are not monotonic on every
+    platform clock).
+    """
 
     id: str
     role: str
     content: str
     created_at: datetime = field(default_factory=_utc_now)
+    sequence: int | None = None
 
     def __post_init__(self) -> None:
         if self.role not in ALLOWED_ROLES:
