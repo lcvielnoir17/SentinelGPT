@@ -103,16 +103,17 @@ def get_conversation_store() -> ConversationStore:
 
 
 def get_conversation_agent() -> Any | None:
-    """The Gemini multi-turn agent, or None when no API key is configured."""
+    """The Gemini multi-turn agent, or None when no API key is resolvable."""
+    from src.infrastructure.secrets import get_gemini_api_key
+
     settings = get_settings()
-    if not settings.gemini_api_key:
+    api_key = get_gemini_api_key()
+    if not api_key:
         return None
     try:
         from src.infrastructure.ai.gemini_chat_agent import GeminiConversationAgent
 
-        return GeminiConversationAgent(
-            api_key=settings.gemini_api_key, model=settings.gemini_flash_model
-        )
+        return GeminiConversationAgent(api_key=api_key, model=settings.gemini_flash_model)
     except Exception:  # noqa: BLE001 - AI must degrade, never block requests
         return None
 

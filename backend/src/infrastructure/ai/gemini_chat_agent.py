@@ -60,9 +60,10 @@ class GeminiConversationAgent:
     @classmethod
     def from_settings(cls) -> GeminiConversationAgent:
         from src.config.settings import get_settings
+        from src.infrastructure.secrets import get_gemini_api_key
 
         settings = get_settings()
-        return cls(api_key=settings.gemini_api_key, model=settings.gemini_flash_model)
+        return cls(api_key=get_gemini_api_key(), model=settings.gemini_flash_model)
 
     def respond(
         self,

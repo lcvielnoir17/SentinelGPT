@@ -633,8 +633,10 @@ class ScanService:
     def _maybe_gemini_analyzer(self) -> Any | None:
         from src.config.settings import get_settings
 
-        settings = get_settings()
-        if not settings.gemini_api_key:
+        get_settings()
+        from src.infrastructure.secrets import get_gemini_api_key
+
+        if not get_gemini_api_key():
             return None
         try:
             from src.infrastructure.ai.gemini_provider import GeminiEvidenceAnalyzer

@@ -86,11 +86,14 @@ async def readyz(response: Response) -> ReadinessResponse:
     redis_error = redis_result.get("error")
 
     # 3. Check AI / Gemini configuration readiness
-    gemini_status = "up" if bool(settings.gemini_api_key) else "not_configured"
+    from src.infrastructure.secrets import get_gemini_api_key
+
+    gemini_configured = bool(get_gemini_api_key())
+    gemini_status = "up" if gemini_configured else "not_configured"
     gemini_details: dict[str, Any] = {
         "flash_lite_model": settings.gemini_flash_lite_model,
         "flash_model": settings.gemini_flash_model,
-        "configured": bool(settings.gemini_api_key),
+        "configured": gemini_configured,
     }
 
     components: dict[str, ComponentHealth] = {

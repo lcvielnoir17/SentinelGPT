@@ -127,11 +127,12 @@ async def _run_scan_job(scan_id: uuid.UUID) -> None:
     """Open a fresh session, run the secure chain, commit per stage."""
     from src.domain.scans.scan_service import ScanService
     from src.infrastructure.ai.gemini_provider import GeminiEvidenceAnalyzer
+    from src.infrastructure.secrets import get_gemini_api_key
 
     sessionmaker = get_async_sessionmaker()
     async with sessionmaker() as session:
         ai_analyzer: Any = None
-        if get_settings().gemini_api_key:
+        if get_gemini_api_key():
             try:
                 ai_analyzer = GeminiEvidenceAnalyzer.from_settings()
             except Exception:  # noqa: BLE001 - AI must degrade, never block scans
