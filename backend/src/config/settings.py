@@ -99,6 +99,60 @@ class Settings(BaseSettings):
         description="Enable background execution of authorized scans (Phase 7+)",
     )
 
+    # Firebase Authentication (Ideathon identity bridge, ADR-0010).
+    # Verifying ID tokens needs only the project ID (Google's public JWKs);
+    # empty disables the Firebase sign-in exchange endpoint entirely.
+    firebase_project_id: str = Field(
+        default="",
+        description="Firebase project ID; empty disables the /auth/firebase exchange endpoint",
+    )
+
+    # Firestore (Ideathon conversation persistence, ADR-0011).
+    # Client access always flows through the backend Admin SDK; the Firebase
+    # UID of the verified identity scopes every document path.
+    firestore_conversations_enabled: bool = Field(
+        default=True,
+        description="Persist AI conversations in Firestore (requires firebase_project_id)",
+    )
+    firestore_database_id: str = Field(
+        default="(default)",
+        description="Firestore database id backing conversation storage",
+    )
+
+    # Google Cloud Secret Manager (Ideathon production secret source).
+    # Production on Cloud Run may alternatively inject GEMINI_API_KEY via
+    # `--set-secrets`; both paths keep the key out of the image and Git.
+    gemini_api_key_secret: str = Field(
+        default="",
+        description=(
+            "Optional Secret Manager resource name "
+            "(projects/{project}/secrets/{secret}/versions/{version|latest}); "
+            "takes precedence over GEMINI_API_KEY when set"
+        ),
+    )
+    secret_manager_enabled: bool = Field(
+        default=True,
+        description="Allow resolving secrets via Google Cloud Secret Manager when resource names are configured",
+    )
+
+    # Conversational analyst safeguards (multi-turn Gemini, ADR-0011).
+    conversation_max_message_chars: int = Field(
+        default=8_000,
+        description="Maximum accepted user message length in characters",
+    )
+    conversation_max_history_messages: int = Field(
+        default=40,
+        description="Maximum persisted messages sent to Gemini as prior turns",
+    )
+    conversation_max_context_chars: int = Field(
+        default=12_000,
+        description="Maximum scan/finding context characters attached to a prompt",
+    )
+    conversation_rate_limit_per_minute: int = Field(
+        default=12,
+        description="Maximum assistant replies per user per minute (Redis-backed; 0 disables)",
+    )
+
     # Security & Authentication (Invariants: HttpOnly; Secure; SameSite=Strict cookies)
     jwt_secret_key: str = Field(
         default="development-insecure-secret-key-change-in-production-min-32-chars",
