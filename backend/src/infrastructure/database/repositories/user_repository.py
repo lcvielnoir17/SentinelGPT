@@ -36,6 +36,16 @@ class UserRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_firebase_uid(self, firebase_uid: str) -> User | None:
+        """Fetch the account mapped to a verified Firebase UID (ADR-0010)."""
+        stmt = select(User).where(User.firebase_uid == firebase_uid)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    def link_firebase_uid(self, user: User, firebase_uid: str) -> None:
+        """Attach a verified Firebase UID to an existing local account."""
+        user.firebase_uid = firebase_uid
+
     def add(self, user: User) -> None:
         """Stage a new user row; committed by the request-scoped session."""
         self._session.add(user)

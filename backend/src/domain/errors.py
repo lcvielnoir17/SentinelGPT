@@ -214,3 +214,24 @@ class InvalidScanStateError(DomainError):
     status_code = 409
     code = "SCAN_INVALID_STATE"
     message = "Requested operation is not valid for the current scan state."
+
+
+class FirebaseTokenInvalidError(DomainError):
+    """Firebase ID token failed verification (401 UNAUTHENTICATED).
+
+    One generic failure surface for every token problem (bad signature,
+    wrong audience/issuer, expired, malformed) so the endpoint leaks no
+    verification internals.
+    """
+
+    status_code = 401
+    code = "UNAUTHENTICATED"
+    message = "Firebase ID token verification failed."
+
+
+class FeatureDisabledError(DomainError):
+    """The requested capability is not configured on this deployment (503)."""
+
+    status_code = 503
+    code = "FEATURE_DISABLED"
+    message = "This feature is not enabled on this deployment."

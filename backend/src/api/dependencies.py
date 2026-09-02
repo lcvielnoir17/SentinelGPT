@@ -42,7 +42,12 @@ async def get_current_user(request: Request, session: SessionDep) -> UserAccount
     user = await UserRepository(session).get_by_id(user_id)
     if user is None or not user.is_active:
         raise NotAuthenticatedError()
-    return UserAccount(id=user.id, email=user.email, created_at=user.created_at)
+    return UserAccount(
+        id=user.id,
+        email=user.email,
+        created_at=user.created_at,
+        firebase_uid=user.firebase_uid,
+    )
 
 
 CurrentUser = Annotated[UserAccount, Depends(get_current_user)]

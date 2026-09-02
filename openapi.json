@@ -178,6 +178,48 @@
         }
       }
     },
+    "/api/v1/auth/firebase": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Exchange a Firebase ID token for SentinelGPT session cookies",
+        "description": "Verifies a Firebase ID token server-side (signature, audience, issuer, expiry against Google's public JWKs) and resolves or provisions the canonical SentinelGPT account for that identity (ADR-0010), then issues the same HttpOnly session cookies as POST /auth/login. The client never sends a user ID \u2014 identity comes exclusively from the verified token. Requires FIREBASE_PROJECT_ID to be configured (503 otherwise).",
+        "operationId": "firebase_login_api_v1_auth_firebase_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FirebaseLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/me": {
       "get": {
         "tags": [
@@ -2164,6 +2206,23 @@
           "createdAt"
         ],
         "title": "FindingResponse"
+      },
+      "FirebaseLoginRequest": {
+        "properties": {
+          "idToken": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Idtoken",
+            "description": "Firebase ID token obtained from the Firebase Auth SDK."
+          }
+        },
+        "type": "object",
+        "required": [
+          "idToken"
+        ],
+        "title": "FirebaseLoginRequest",
+        "description": "POST /auth/firebase request body (ADR-0010)."
       },
       "HTTPValidationError": {
         "properties": {

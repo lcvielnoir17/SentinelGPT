@@ -26,8 +26,10 @@ Phase 1 Auth Service deliverables.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
+from functools import lru_cache
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Request, Response, status
@@ -42,7 +44,12 @@ from src.config.constants import (
     REFRESH_TOKEN_COOKIE,
 )
 from src.config.settings import Settings, get_settings
-from src.domain.errors import NotAuthenticatedError, RefreshCsrfHeaderMissingError
+from src.domain.errors import (
+    FeatureDisabledError,
+    NotAuthenticatedError,
+    RefreshCsrfHeaderMissingError,
+)
+from src.domain.users.firebase_token_service import FirebaseTokenVerifier
 from src.domain.users.refresh_service import RefreshService
 from src.domain.users.token_service import create_access_token
 from src.domain.users.user_service import UserAccount, UserService
@@ -164,6 +171,17 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class FirebaseLoginRequest(BaseModel):
+    """POST /auth/firebase request body (ADR-0010)."""
+
+    id_token: str = Field(
+        min_length=1,
+        max_length=4096,
+        validation_alias="idToken",
+        description="Firebase ID token obtained from the Firebase Auth SDK.",
+    )
+
+
 class UserInfo(BaseModel):
     """Authenticated-user representation ({ id, email, mfaEnabled, organizations })."""
 
@@ -189,6 +207,15 @@ class LoginResponse(BaseModel):
 
 def _to_user_info(account: UserAccount) -> UserInfo:
     return UserInfo(id=account.id, email=account.email, mfa_enabled=False)
+
+
+@lru_cache
+def _firebase_verifier(project_id: str) -> FirebaseTokenVerifier:
+    """One verifier (and its JWK cache) per process per project ID.
+
+    Patched by the unit tests to inject offline JWK resolution.
+    """
+    return FirebaseTokenVerifier(project_id)
 
 
 @router.post(
@@ -220,6 +247,41 @@ async def login(payload: LoginRequest, session: SessionDep, response: Response) 
     # Unknown-email and wrong-password raise the identical InvalidCredentialsError
     # (401 UNAUTHENTICATED) — no user-enumeration oracle (Chapter 5, Section 2).
     account = await service.authenticate(payload.email, payload.password)
+    _issue_session(response, session, account, settings)
+    return LoginResponse(
+        user=_to_user_info(account),
+        expires_in=settings.access_token_expire_minutes * 60,
+    )
+
+
+@router.post(
+    "/firebase",
+    response_model=LoginResponse,
+    summary="Exchange a Firebase ID token for SentinelGPT session cookies",
+    description=(
+        "Verifies a Firebase ID token server-side (signature, audience, "
+        "issuer, expiry against Google's public JWKs) and resolves or "
+        "provisions the canonical SentinelGPT account for that identity "
+        "(ADR-0010), then issues the same HttpOnly session cookies as "
+        "POST /auth/login. The client never sends a user ID — identity "
+        "comes exclusively from the verified token. Requires "
+        "FIREBASE_PROJECT_ID to be configured (503 otherwise)."
+    ),
+)
+async def firebase_login(
+    payload: FirebaseLoginRequest,
+    session: SessionDep,
+    response: Response,
+) -> LoginResponse:
+    settings = get_settings()
+    if not settings.firebase_project_id:
+        raise FeatureDisabledError("Firebase sign-in is not configured on this deployment.")
+    verifier = _firebase_verifier(settings.firebase_project_id)
+    # JWKS resolution is blocking HTTP; keep it off the event loop.
+    identity = await asyncio.to_thread(verifier.verify, payload.id_token)
+    account = await UserService(session).authenticate_firebase(
+        identity, project_id=settings.firebase_project_id
+    )
     _issue_session(response, session, account, settings)
     return LoginResponse(
         user=_to_user_info(account),
