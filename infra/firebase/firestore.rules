@@ -1,0 +1,30 @@
+rules_version = '2';
+
+// SentinelGPT Firestore security rules (ADR-0011).
+//
+// ALL Firestore access is backend-only through the Admin SDK, which bypasses
+// these rules entirely. Conversation documents are written and read by the
+// Cloud Run API using the verified Firebase UID of the authenticated user;
+// the ConversationService enforces per-user authorization before any store
+// call. No browser code ever talks to Firestore directly.
+//
+// Therefore: deny every client operation on every document. Deploy with:
+//   firebase deploy --only firestore:rules   (or gcloud firestore ops)
+// and verify the deny-all posture when onboarding the Firebase project.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Conversations: users/{uid}/conversations/{conversationId}/messages/{messageId}
+    match /users/{uid}/conversations/{conversationId} {
+      allow read, write: if false;
+      match /messages/{messageId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Catch-all: nothing else is client-accessible either.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
