@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "../../../services/apiClient";
 import { downloadScanReport } from "../../reports/reportsApi";
+import { ConversationPanel } from "../../conversations/components/ConversationPanel";
 import {
   cancelScan,
   compareScans,
@@ -86,6 +87,8 @@ export function ScanDetailPage() {
   const [rescanBusy, setRescanBusy] = useState(false);
   const [rescanError, setRescanError] = useState<string | null>(null);
   const [rescanLink, setRescanLink] = useState<string | null>(null);
+  // Which finding's analyst conversation is open (null = all closed).
+  const [chatFindingId, setChatFindingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -334,6 +337,7 @@ export function ScanDetailPage() {
           <ul className="findings">
             {findings.map((f) => {
               const exp = explanations[f.id];
+              const chatOpen = chatFindingId === f.id;
               return (
                 <li key={f.id} className="finding">
                   <header className="finding-header">
@@ -375,6 +379,18 @@ export function ScanDetailPage() {
                       )}
                     </div>
                   )}
+                  <div className="ask-analyst">
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={() => setChatFindingId(chatOpen ? null : f.id)}
+                    >
+                      {chatOpen ? "Close analyst" : "Ask SentinelGPT"}
+                    </button>
+                    {chatOpen && (
+                      <ConversationPanel scanId={scanId} findingId={f.id} />
+                    )}
+                  </div>
                 </li>
               );
             })}

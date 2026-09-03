@@ -17,7 +17,8 @@ export function AuthPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const { login, register } = useAuth();
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const { login, register, signInWithGoogle, firebaseEnabled } = useAuth();
   const navigate = useNavigate();
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -39,6 +40,25 @@ export function AuthPage() {
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleGoogleSignIn() {
+    setError(null);
+    setGoogleBusy(true);
+    try {
+      await signInWithGoogle();
+      navigate("/dashboard", { replace: true });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else if (err instanceof Error && err.name !== "FirebaseError") {
+        setError(err.message);
+      } else {
+        setError("Google sign-in failed or was cancelled.");
+      }
+    } finally {
+      setGoogleBusy(false);
     }
   }
 
@@ -104,6 +124,25 @@ export function AuthPage() {
             {busy ? "Working…" : mode === "login" ? "Sign in" : "Create account"}
           </button>
         </form>
+
+        {firebaseEnabled && (
+          <>
+            <div className="auth-divider" aria-hidden="true">
+              <span>or</span>
+            </div>
+            <button
+              type="button"
+              className="google-signin"
+              onClick={handleGoogleSignIn}
+              disabled={googleBusy || busy}
+            >
+              {googleBusy ? "Connecting…" : "Continue with Google"}
+            </button>
+            <p className="hint auth-hint">
+              Firebase-authenticated sign-in (Google) exchanged for a SentinelGPT session.
+            </p>
+          </>
+        )}
       </section>
     </main>
   );

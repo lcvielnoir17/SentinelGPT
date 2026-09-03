@@ -25,9 +25,17 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import type { UserAccount } from "../features/auth/api/authApi";
-import { login as apiLogin, logout as apiLogout, me as apiMe, register as apiRegister } from "../features/auth/api/authApi";
+import {
+  login as apiLogin,
+  logout as apiLogout,
+  me as apiMe,
+  register as apiRegister,
+  firebaseLogin as apiFirebaseLogin,
+} from "../features/auth/api/authApi";
 import { ApiError, setUnauthorizedHandler } from "../services/apiClient";
+import { firebaseEnabled as isFirebaseEnabled, getFirebaseAuth } from "../services/firebase";
 
 type BootstrapState = "pending" | "ready";
 
@@ -37,6 +45,9 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Firebase (Google) sign-in: ID token verified server-side (ADR-0010). */
+  signInWithGoogle: () => Promise<void>;
+  firebaseEnabled: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -111,6 +122,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  // Firebase bridge (ADR-0010): the popup produces a Google ID token; the
+  // backend verifies it against Google's public keys and issues the same
+  // HttpOnly cookie session as email/password login. The Firebase session
+  // itself is not consulted again — the cookie session is canonical.
+  const signInWithGoogle = useCallback(async () => {
+    const auth = getFirebaseAuth();
+    if (auth === null) {
+      throw new Error("Firebase sign-in is not configured on this deployment.");
+    }
+    const provider = new GoogleAuthProvider();
+    const credential = await signInWithPopup(auth, provider);
+    const idToken = await credential.user.getIdToken();
+    const response = await apiFirebaseLogin(idToken);
+    setUser(response.user);
+  }, []);
+
   // Register the global 401 → "go to /login" handler so an expired access
   // JWT never strands the user on a page that can't reach the API. The
   // handler is a no-op while bootstrap is in flight: a 401 during the
@@ -127,8 +154,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [navigate, bootstrap]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, bootstrap, login, register, logout }),
-    [user, bootstrap, login, register, logout],
+    () => ({ user, bootstrap, login, register, logout, signInWithGoogle, firebaseEnabled: isFirebaseEnabled }),
+    [user, bootstrap, login, register, logout, signInWithGoogle],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

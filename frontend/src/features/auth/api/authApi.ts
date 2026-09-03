@@ -71,3 +71,16 @@ export async function logout(): Promise<void> {
     headers: refreshRequestHeaders(),
   });
 }
+
+/**
+ * Exchange a Firebase ID token for the SentinelGPT cookie session
+ * (ADR-0010). The backend verifies the token server-side and issues the
+ * same HttpOnly cookies as `login`; no token material is ever stored
+ * client-side.
+ */
+export function firebaseLogin(idToken: string): Promise<LoginResponse> {
+  return apiRequest<LoginResponse>("/auth/firebase", {
+    method: "POST",
+    body: { idToken },
+  });
+}

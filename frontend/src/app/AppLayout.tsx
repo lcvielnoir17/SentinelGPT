@@ -38,6 +38,9 @@ export function AppLayout() {
             <NavLink to="/organizations" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
               Organizations
             </NavLink>
+            <NavLink to="/conversations" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+              AI analyst
+            </NavLink>
             <NavLink to="/audit-log" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
               Audit log
             </NavLink>
