@@ -1,0 +1,45 @@
+# =============================================================================
+# SentinelGPT Frontend (SPA) on Cloud Run
+# =============================================================================
+# The nginx edge proxies /api to the API's Cloud Run URL so browser requests
+# stay same-origin (first-party cookies, no CORS). Set API_UPSTREAM to the
+# API service URL after the first API deployment:
+#   gcloud run services update sentinelgpt-frontend --region $REGION \
+#       --update-env-vars API_UPSTREAM=https://sentinelgpt-api-<hash>-<region>.a.run.app
+#
+# Preferred deployment: scripts/deploy-cloudrun.sh
+# =============================================================================
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: sentinelgpt-frontend
+  labels:
+    app: sentinelgpt
+    component: frontend
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "5"
+    spec:
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT/cloud-run-source-deploy/sentinelgpt-frontend:latest
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: API_UPSTREAM
+              value: https://sentinelgpt-api-HASH-REGION.a.run.app
+          resources:
+            limits:
+              cpu: "0.5"
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            periodSeconds: 30

@@ -47,11 +47,16 @@ COPY alembic.ini /app/alembic.ini
 
 USER appuser
 
+# Cloud Run injects PORT (default 8080 there); compose and local runs keep
+# the historical 8000 default so healthchecks and overrides stay valid.
+ENV PORT=8000
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/healthz || exit 1
+    CMD curl -f "http://localhost:${PORT}/healthz" || exit 1
 
 # Console scripts of --target installs are not on PATH; invoke uvicorn as a
-# module so the locked dependency set is used exactly as installed.
-CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# module so the locked dependency set is used exactly as installed. The
+# shell form lets ${PORT} expand at run time.
+CMD ["sh", "-c", "python -m uvicorn src.main:app --host 0.0.0.0 --port \"${PORT:-8000}\""]

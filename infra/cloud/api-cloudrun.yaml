@@ -1,0 +1,98 @@
+# =============================================================================
+# SentinelGPT API on Cloud Run (Ideathon requirement 5)
+# =============================================================================
+# Preferred deployment is scripts/deploy-cloudrun.sh, which builds via Cloud
+# Build and fills the placeholders below. This manifest documents the exact
+# service shape for `gcloud services run`-style review or GitOps use:
+#
+#   gcloud run services replace infra/cloud/api-cloudrun.yaml --region $REGION
+#
+# Runtime pieces referenced here (create once per project):
+#   * Secret Manager secret holding the Gemini API key:
+#       printf '%s' "$GEMINI_API_KEY" | gcloud secrets create gemini-api-key \
+#           --data-file=-
+#   * Cloud SQL instance for PostgreSQL (authoritative scanner data):
+#       gcloud sql instances create sentinelgpt-pg --database-version=POSTGRES_16
+#   * Firestore in Native mode + the deny-all rules file
+#     (infra/firebase/firestore.rules).
+#   * The scanner Celery worker does NOT run on Cloud Run (no privileged
+#     Docker socket): keep it on a VM/other compute with Docker; this API
+#     runs with SCANNER_EXECUTION_ENABLED=false.
+# =============================================================================
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: sentinelgpt-api
+  labels:
+    app: sentinelgpt
+    component: api
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "5"
+        # Required for the Cloud SQL unix socket below.
+        run.googleapis.com/cloudsql-instances: PROJECT:REGION:sentinelgpt-pg
+        # Required for Memorystore (Celery broker) if a Redis worker is used.
+        # run.googleapis.com/vpc-access-connector: sentinelgpt-connector
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 40
+      timeoutSeconds: 300
+      serviceAccountName: sentinelgpt-api@PROJECT.iam.gserviceaccount.com
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT/cloud-run-source-deploy/sentinelgpt-api:latest
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: ENVIRONMENT
+              value: production
+            - name: DEBUG
+              value: "false"
+            - name: LOG_LEVEL
+              value: INFO
+            - name: LOG_JSON
+              value: "true"
+            # PostgreSQL (Cloud SQL via unix socket; asyncpg socket URL).
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://API_USER:API_PASSWORD@/sentinelgpt?host=/cloudsql/PROJECT:REGION:sentinelgpt-pg"
+            - name: SCANNER_EXECUTION_ENABLED
+              value: "false"
+            # Firebase / Firestore
+            - name: FIREBASE_PROJECT_ID
+              value: PROJECT
+            - name: FIRESTORE_CONVERSATIONS_ENABLED
+              value: "true"
+            # Gemini via Secret Manager (Ideathon requirement 4)
+            - name: GEMINI_API_KEY_SECRET
+              value: projects/PROJECT/secrets/gemini-api-key/versions/latest
+            - name: SECRET_MANAGER_ENABLED
+              value: "true"
+            - name: GEMINI_FLASH_MODEL
+              value: gemini-2.0-flash
+            # Same-origin edge proxies /api; allow direct origins as needed.
+            - name: CORS_ORIGINS
+              value: '[]'
+          # Strong, unique session-signing key injected as an env var from
+          # Secret Manager at deploy time (kept out of image + Git):
+          #   --set-secrets=JWT_SECRET_KEY=jwt-secret-key:latest
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            failureThreshold: 20
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 30
