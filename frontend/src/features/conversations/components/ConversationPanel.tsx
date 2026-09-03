@@ -12,6 +12,7 @@ import { ApiError } from "../../../services/apiClient";
 import {
   createConversation,
   getConversation,
+  listConversations,
   sendMessage,
 } from "../api/conversationsApi";
 import type { ConversationMessageDto } from "../api/conversationsApi";
@@ -32,6 +33,10 @@ export function ConversationPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastMessageRef = useRef<HTMLDivElement | null>(null);
+  // Server-truth id behind the state, plus single-flight resolution so the
+  // mount-time reconnect and a first send never create two conversations.
+  const conversationIdRef = useRef<string | null>(null);
+  const resolvingRef = useRef<Promise<string> | null>(null);
 
   useEffect(() => {
     if (messages.length === 0) return;
@@ -50,6 +55,51 @@ export function ConversationPanel({
     }
   }, []);
 
+  const resolveConversation = useCallback((): Promise<string> => {
+    if (conversationIdRef.current !== null) {
+      return Promise.resolve(conversationIdRef.current);
+    }
+    if (resolvingRef.current === null) {
+      resolvingRef.current = (async () => {
+        // Reconnect to the conversation this finding already has (persistence
+        // across panel close/reopen and page reloads) before creating one.
+        const existing = await listConversations(50);
+        const known = existing.find(
+          (c) => c.findingId === findingId && c.scanId === scanId,
+        );
+        const id =
+          known?.id ??
+          (await createConversation({ scanId, findingId })).id;
+        conversationIdRef.current = id;
+        setConversationId(id);
+        return id;
+      })().finally(() => {
+        resolvingRef.current = null;
+      });
+    }
+    return resolvingRef.current;
+  }, [findingId, scanId]);
+
+  // Reconnect on mount so a reopened panel shows the prior thread. Local
+  // messages always win over a stale history fetch (a send may be in flight).
+  useEffect(() => {
+    let cancelled = false;
+    void resolveConversation()
+      .then(async (id) => {
+        if (cancelled || conversationIdRef.current !== id) return;
+        const detail = await getConversation(id);
+        if (!cancelled) {
+          setMessages((prev) => (prev.length > 0 ? prev : detail.messages));
+        }
+      })
+      .catch(() => {
+        // Best-effort: creation happens on first send instead.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolveConversation]);
+
   const submitDraft = useCallback(async () => {
     const content = draft.trim();
     if (!content || sending) return;
@@ -57,16 +107,7 @@ export function ConversationPanel({
     setSending(true);
     setDraft("");
     try {
-      let id = conversationId;
-      if (id === null) {
-        const created = await createConversation({
-          scanId,
-          findingId,
-          title: content.slice(0, 80),
-        });
-        id = created.id;
-        setConversationId(id);
-      }
+      const id = await resolveConversation();
       const response = await sendMessage(id, content);
       setMessages((prev) => [...prev, response.userMessage, response.assistantMessage]);
     } catch (err) {
@@ -83,7 +124,7 @@ export function ConversationPanel({
     } finally {
       setSending(false);
     }
-  }, [conversationId, draft, findingId, scanId, sending]);
+  }, [draft, resolveConversation, sending]);
 
   return (
     <div className="chat-panel" aria-label="SentinelGPT analyst conversation">
