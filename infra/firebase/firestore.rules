@@ -9,7 +9,7 @@ rules_version = '2';
 // call. No browser code ever talks to Firestore directly.
 //
 // Therefore: deny every client operation on every document. Deploy with:
-//   firebase deploy --only firestore:rules   (or gcloud firestore ops)
+//   firebase deploy --only firestore:rules --project <project-id>
 // and verify the deny-all posture when onboarding the Firebase project.
 
 service cloud.firestore {

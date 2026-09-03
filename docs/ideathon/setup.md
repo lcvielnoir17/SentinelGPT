@@ -50,7 +50,7 @@ non-empty `sub`) with the project ID as the only configuration — see
    Admin SDK / ADC, the SPA never touches Firestore):
 
    ```bash
-   firebase deploy --only firestore:rules   # uses infra/firebase/firestore.rules
+   firebase deploy --only firestore:rules --project "$PROJECT_ID"  # firebase.json points at infra/firebase/firestore.rules
    ```
 
    Without the Firebase CLI, paste `infra/firebase/firestore.rules` into

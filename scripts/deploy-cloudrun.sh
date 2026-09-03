@@ -110,7 +110,7 @@ FRONTEND_URL="$(gcloud run services describe "$FRONTEND_SVC" --project "$PROJECT
 
 step "Deploying deny-all Firestore security rules (defense in depth)"
 if command -v firebase >/dev/null 2>&1 && [ -f firebase.json ]; then
-    firebase deploy --only firestore:rules
+    firebase deploy --only firestore:rules --project "$PROJECT_ID"
 else
     echo "  (firebase CLI not found; upload infra/firebase/firestore.rules manually)"
 fi
