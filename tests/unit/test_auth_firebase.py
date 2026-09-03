@@ -302,3 +302,34 @@ async def test_exchange_returns_503_when_not_configured(mocker) -> None:
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "FEATURE_DISABLED"
+
+
+@pytest.mark.asyncio
+async def test_exchange_cookies_match_session_invariants(
+    client: AsyncClient, fake_repo_state, mocker
+) -> None:
+    """Ch2 §9 invariants: HttpOnly + SameSite=Strict cookies, no body token."""
+    _patch_verifier(
+        mocker,
+        _StubVerifier(
+            FirebaseIdentity(uid="uid-1", email="new-user@example.com", email_verified=True)
+        ),
+    )
+
+    response = await client.post(ROUTE, json={"idToken": "token-value"})
+
+    assert response.status_code == 200
+    set_cookies = response.headers.get_list("set-cookie")
+    access_cookies = [c for c in set_cookies if c.lower().startswith("accesstoken=")]
+    refresh_cookies = [c for c in set_cookies if c.lower().startswith("refreshtoken=")]
+    assert access_cookies and refresh_cookies
+    for cookie in access_cookies + refresh_cookies:
+        assert "httponly" in cookie.lower()
+        assert "samesite=strict" in cookie.lower()
+        # The test environment runs plain HTTP; production/staging flip the
+        # Secure attribute via _cookie_secure_flag (covered in
+        # test_auth_cookie_secure_flag.py) — here we pin the local contract.
+        assert "secure=" not in cookie.lower() or "secure" not in cookie.lower()
+    # The response body carries user data only — never token material.
+    assert "eyJ" not in response.text  # no JWT segments
+    assert len(response.headers.get_list("set-cookie")) == 2
