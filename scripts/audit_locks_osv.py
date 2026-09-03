@@ -14,21 +14,21 @@ import urllib.request
 
 def pins(path: str) -> list[tuple[str, str]]:
     out = []
-    for line in open(path, encoding="utf-8"):
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        m = re.match(r"^([A-Za-z0-9_.\-]+)==([^\s;\\]+)", line)
-        if m:
-            out.append((m.group(1), m.group(2)))
+    with open(path, encoding="utf-8") as lock:
+        for line in lock:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            m = re.match(r"^([A-Za-z0-9_.\-]+)==([^\s;\\]+)", line)
+            if m:
+                out.append((m.group(1), m.group(2)))
     return out
 
 
 def audit(path: str) -> int:
     entries = pins(path)
     queries = [
-        {"package": {"name": n.lower(), "ecosystem": "PyPI"}, "version": v}
-        for n, v in entries
+        {"package": {"name": n.lower(), "ecosystem": "PyPI"}, "version": v} for n, v in entries
     ]
     req = urllib.request.Request(
         "https://api.osv.dev/v1/querybatch",
@@ -38,7 +38,7 @@ def audit(path: str) -> int:
     with urllib.request.urlopen(req, timeout=60) as resp:
         results = json.load(resp)["results"]
     hits = []
-    for (name, version), r in zip(entries, results):
+    for (name, version), r in zip(entries, results, strict=True):
         for vuln in r.get("vulns", []):
             hits.append((name, version, vuln["id"]))
     print(f"{path}: {len(entries)} pins, {len(hits)} OSV advisories")
