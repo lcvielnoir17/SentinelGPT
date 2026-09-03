@@ -10,6 +10,68 @@ SentinelGPT is an AI-powered vulnerability-analysis platform in which the AI is 
 - **Strict Authorization:** Mandatory proof of authorization prior to scanning.
 - **Defense in Depth:** Egress-restricted ephemeral sandbox scan runtime.
 
+## Ideathon: Google Cloud integration
+
+SentinelGPT extends its existing security platform (FastAPI, PostgreSQL,
+Redis, Celery, Docker-sandboxed scanning) with a Google Cloud AI layer.
+PostgreSQL remains the source of truth for all security data; the Google
+services form the identity/conversation/deployment layer around it.
+
+**Firebase Authentication — federated sign-in.** The React app signs users
+in with the Google popup via the Firebase Web SDK and sends the resulting
+ID token to `POST /api/v1/auth/firebase`. The backend verifies the token
+**server-side** against Google's public JWKs (RS256 signature, `aud`,
+`iss`, `exp`, non-empty `sub`) — no Firebase Admin credential is held
+anywhere — then maps the verified UID onto SentinelGPT's canonical user
+account and issues the platform's existing hardened session cookies
+(rotation, reuse detection, CSRF header). All downstream authorization
+keys on the canonical user id, never on client-supplied identifiers.
+(ADR-0010)
+
+**Gemini — multi-turn conversational security analyst.** Each finding in a
+scan detail view opens a chat with an analyst powered by Gemini
+(`gemini-2.0-flash` via `google-genai`). Prior turns are replayed as
+Gemini `contents`, trusted system instructions travel as
+`system_instruction`, and finding/scan context is loaded from PostgreSQL
+and attached as a size-capped, delimiter-escaped
+`<untrusted_target_data>` block: scanner output is untrusted evidence to
+analyze, never instructions to follow. Context windows, message quotas,
+and a per-user Redis rate limit bound every prompt. The analyst is
+read-only — it can never mutate security state. (ADR-0012)
+
+**Firestore — user-isolated conversation storage.** Conversations persist
+as `users/{firebase_uid}/conversations/{id}` documents with a `messages`
+subcollection, written and read exclusively by the backend Admin SDK/ADC.
+The UID in the path always comes from the verified session, never from
+client input; cross-owner conversation ids answer the same 404 as unknown
+ids. Client Firestore access is denied by rules
+(`infra/firebase/firestore.rules`) — defense in depth on top of the
+backend-enforced boundary. Locally, an in-memory store with identical
+semantics keeps development Google-free. (ADR-0011)
+
+**Secret Manager — server-side credential retrieval.** The Gemini API key
+is resolved at runtime from Secret Manager
+(`projects/{p}/secrets/{s}/versions/{v}`) with Application Default
+Credentials, cached in-process for 5 minutes so rotation lands without a
+redeploy. A failed lookup degrades to the environment value with a loud
+log — never a blocked platform. The key is never logged, never returned in
+API responses, and never shipped to the frontend; `/healthz` exposes only
+a boolean "configured" signal. (ADR-0013)
+
+**Cloud Run — deployment target.** Two services: the FastAPI API (honours
+Cloud Run's injected `PORT`, `/healthz` startup + liveness probes, Cloud
+SQL PostgreSQL via unix socket, secrets via `--set-secrets`) and an nginx
+frontend that serves the SPA and proxies `/api` same-origin — session
+cookies stay first-party with no CORS surface. The scanner Celery worker
+deliberately runs off Cloud Run (no privileged Docker access there); the
+API runs with `SCANNER_EXECUTION_ENABLED=false`, an explicitly supported
+mode. Deploy with `scripts/deploy-cloudrun.sh`; see
+[docs/ideathon/cloud-run.md](docs/ideathon/cloud-run.md). The repository
+is Cloud Run ready; deployment itself requires a Google Cloud project.
+
+Integration setup: [docs/ideathon/setup.md](docs/ideathon/setup.md) ·
+Demo walkthrough: [docs/ideathon/demo.md](docs/ideathon/demo.md).
+
 ## Project Structure
 
 - `backend/`: FastAPI application, domain services, scanner adapters, AI orchestrator, and database infrastructure.
