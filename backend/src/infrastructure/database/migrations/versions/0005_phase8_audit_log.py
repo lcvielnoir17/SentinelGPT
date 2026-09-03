@@ -1,4 +1,4 @@
-"""Migration 0005: append-only audit log (SRS Chapter 4 §10.1; ADR-0010).
+"""Migration 0005: append-only audit log (SRS Chapter 4 §10.1).
 
 Creates ``audit_log_entry`` and enforces append-only integrity with a
 BEFORE UPDATE OR DELETE trigger that raises — the table physically cannot
