@@ -102,20 +102,35 @@ def get_conversation_store() -> ConversationStore:
     return _memory_store
 
 
+_agent_cache: tuple[str, str, Any] | None = None
+
+
 def get_conversation_agent() -> Any | None:
-    """The Gemini multi-turn agent, or None when no API key is resolvable."""
+    """The Gemini multi-turn agent, or None when no API key is resolvable.
+
+    The agent — and the HTTP client pool inside the genai Client — is
+    cached per (key, model) pair so a chat turn does not pay connection
+    setup on every request. A rotated secret key simply builds the next
+    agent; the single-entry cache keeps memory bounded.
+    """
     from src.infrastructure.secrets import get_gemini_api_key
 
+    global _agent_cache
     settings = get_settings()
     api_key = get_gemini_api_key()
     if not api_key:
         return None
+    model = settings.gemini_flash_model
+    if _agent_cache is not None and _agent_cache[0] == api_key and _agent_cache[1] == model:
+        return _agent_cache[2]
     try:
         from src.infrastructure.ai.gemini_chat_agent import GeminiConversationAgent
 
-        return GeminiConversationAgent(api_key=api_key, model=settings.gemini_flash_model)
+        agent = GeminiConversationAgent(api_key=api_key, model=model)
     except Exception:  # noqa: BLE001 - AI must degrade, never block requests
         return None
+    _agent_cache = (api_key, model, agent)
+    return agent
 
 
 def get_rate_limiter() -> RedisFixedWindowLimiter:
