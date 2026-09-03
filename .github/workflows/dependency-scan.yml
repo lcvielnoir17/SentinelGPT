@@ -32,9 +32,7 @@ jobs:
         run: pip-audit -r "$GITHUB_WORKSPACE/requirements-dev.lock" --strict
 
       - name: Frontend audit (critical/high policy)
-        defaults:
-          run:
-            working-directory: frontend
+        working-directory: frontend
         run: |
           npm ci
           npm audit --audit-level=high

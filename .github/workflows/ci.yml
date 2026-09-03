@@ -2,9 +2,9 @@ name: SentinelGPT CI - Fast Gate
 
 on:
   push:
-    branches: [main]
+    branches: [main, ideathon]
   pull_request:
-    branches: [main]
+    branches: [main, ideathon]
 
 jobs:
   backend-lint-and-types:
@@ -103,6 +103,9 @@ jobs:
 
       - name: Type-check and build
         run: npm run build
+
+      - name: Frontend tests (vitest)
+        run: npm test
 
       # SRS Chapter 14, Section 2: dependency scan blocks on critical/high.
       # Moderate dev-toolchain advisories do not block the fast tier.
