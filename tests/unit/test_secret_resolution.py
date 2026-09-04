@@ -148,6 +148,26 @@ def test_reset_cache_forces_refetch(patch_settings, mocker) -> None:  # type: ig
     assert fetch.call_count == 2
 
 
+def test_reset_cache_clears_secret_flag(patch_settings, mocker) -> None:  # type: ignore[no-untyped-def]
+    """Regression: reset_cache must clear the secret/negative TTL selector.
+
+    Before the fix, ``reset_cache`` left ``_cached_is_secret`` set, so a
+    failed refetch after a reset inherited the POSITIVE (300s) TTL instead
+    of the NEGATIVE (30s) one — a stale outage could linger 10x longer.
+    """
+    patch_settings(_settings(gemini_api_key_secret="projects/p/secrets/gemini/versions/latest"))
+    fetch = mocker.patch.object(resolver, "_fetch_from_secret_manager", return_value="sm-key")
+    assert get_gemini_api_key() == "sm-key"
+    assert resolver._cached_is_secret is True
+    reset_cache()
+    assert resolver._cached_key is None
+    assert resolver._cached_is_secret is False
+    fetch.side_effect = RuntimeError("boom")
+    assert get_gemini_api_key() == "env-key"
+    assert fetch.call_count == 2
+    assert resolver._cached_is_secret is False
+
+
 def test_whitespace_only_secret_payload_rejected(patch_settings, mocker) -> None:  # type: ignore[no-untyped-def]
     patch_settings(_settings(gemini_api_key_secret="projects/p/secrets/gemini/versions/latest"))
 

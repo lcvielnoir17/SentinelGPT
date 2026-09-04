@@ -60,10 +60,11 @@ def is_secret_resource_name(value: str) -> bool:
 
 def reset_cache() -> None:
     """Clear the cached secret (tests and forced refresh)."""
-    global _cached_key, _cached_at
+    global _cached_key, _cached_at, _cached_is_secret
     with _cache_lock:
         _cached_key = None
         _cached_at = 0.0
+        _cached_is_secret = False
 
 
 def _client_factory() -> Any:
@@ -111,7 +112,7 @@ def get_gemini_api_key() -> str:
     resource = settings.gemini_api_key_secret.strip()
     try:
         key: str = _fetch_from_secret_manager(resource)
-        _cached_is_secret = True
+        is_secret = True
     except Exception as exc:  # noqa: BLE001 - degrade to env, never block
         _logger.error(
             "secret_manager_resolution_failed",
@@ -120,11 +121,12 @@ def get_gemini_api_key() -> str:
             fallback="environment GEMINI_API_KEY",
         )
         key = settings.gemini_api_key
-        _cached_is_secret = False
+        is_secret = False
 
     with _cache_lock:
         _cached_key = key
         _cached_at = time.monotonic()
+        _cached_is_secret = is_secret
     return key
 
 
