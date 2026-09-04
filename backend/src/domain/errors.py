@@ -88,6 +88,19 @@ class InvalidPaginationCursorError(DomainError):
     message = "Invalid pagination cursor."
 
 
+class InvalidAttestationError(DomainError):
+    """Attestation parameters failed validation (400).
+
+    Covers unusable expiry values (naive or already-past ``expires_at``):
+    an authorization that is expired before it is created can never
+    authorize a scan, so it is rejected instead of persisted as a dead row.
+    """
+
+    status_code = 400
+    code = "VALIDATION_ERROR"
+    message = "Invalid attestation parameters."
+
+
 class RefreshCsrfHeaderMissingError(DomainError):
     """/auth/refresh or /auth/logout called without the CSRF-mitigation
     header that only same-origin JavaScript can set (403, Chapter 2 §9)."""

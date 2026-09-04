@@ -22,7 +22,7 @@
  *     "no active session" (not a navigation event).
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import type { UserAccount } from "../features/auth/api/authApi";
@@ -55,6 +55,10 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserAccount | null>(null);
   const [bootstrap, setBootstrap] = useState<BootstrapState>("pending");
+  // Mirror of `bootstrap` readable synchronously inside the global 401
+  // handler: the handler closure would otherwise go stale in the window
+  // between the state commit and the effect re-registration.
+  const bootstrapRef = useRef<BootstrapState>("pending");
   const navigate = useNavigate();
 
   // One-shot session restore on app mount. The probe is the only
@@ -85,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } finally {
         if (!cancelled) {
+          bootstrapRef.current = "ready";
           setBootstrap("ready");
         }
       }
@@ -171,12 +176,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // RequireAuth handles the resulting user === null state.
   useEffect(() => {
     setUnauthorizedHandler(() => {
-      if (bootstrap !== "ready") return;
+      if (bootstrapRef.current !== "ready") return;
       setUser(null);
       navigate("/login", { replace: true });
     });
     return () => setUnauthorizedHandler(null);
-  }, [navigate, bootstrap]);
+  }, [navigate]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ user, bootstrap, login, register, logout, signInWithGoogle, firebaseEnabled: isFirebaseEnabled }),

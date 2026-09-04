@@ -75,6 +75,9 @@ async def client(fake_repo_state) -> AsyncClient:
         async def flush(self) -> None:
             return None
 
+        async def rollback(self) -> None:
+            return None
+
     async def _overridden_session():
         yield _StubSession()
 
@@ -121,6 +124,33 @@ async def test_register_duplicate_email_conflict_envelope(
     error = response.json()["error"]
     assert error["code"] == "CONFLICT"
     assert error["requestId"]
+
+
+@pytest.mark.asyncio
+async def test_register_concurrent_duplicate_returns_409_not_500(
+    client: AsyncClient, fake_repo_state, mocker
+) -> None:
+    """A racer committing between check and flush maps to 409, not 500."""
+    from sqlalchemy.exc import IntegrityError
+
+    from src.infrastructure.database.repositories.user_repository import UserRepository
+
+    racer = _make_user("racer@example.com", "whatever-long-password")
+
+    async def racy_flush(_self: UserRepository) -> None:
+        # Simulate the racer's commit landing first.
+        fake_repo_state["existing_user"] = racer
+        raise IntegrityError("INSERT INTO user", {}, Exception("unique_violation"))
+
+    mocker.patch.object(UserRepository, "flush", racy_flush)
+
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "racer@example.com", "password": "correct-horse-battery"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "CONFLICT"
 
 
 @pytest.mark.asyncio

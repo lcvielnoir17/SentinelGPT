@@ -98,8 +98,20 @@ class OrganizationService:
             user_id=user_id,
             role=role,
         )
-        self._memberships.add_membership(membership)
-        await self._memberships.flush()
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            self._memberships.add_membership(membership)
+            await self._memberships.flush()
+        except IntegrityError as exc:
+            # Concurrent duplicate invite won the race, or the referenced
+            # user/org row does not exist. Roll back and re-read to tell
+            # idempotent success apart from a dangling reference.
+            await self._session.rollback()
+            raced = await self._memberships.get_membership(org_id, user_id)
+            if raced is not None:
+                return _to_membership_details(raced)
+            raise NotFoundError() from exc
         return _to_membership_details(membership)
 
     async def change_role(

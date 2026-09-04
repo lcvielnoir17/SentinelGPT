@@ -595,3 +595,55 @@ def test_base64_cursor_payload_shape() -> None:
         )
     )
     assert set(raw) == {"c", "i"}
+
+
+def test_migration_chain_has_single_head_at_0008() -> None:
+    """The linear chain must extend to the tenant/audit index revision."""
+    from importlib import import_module
+
+    head = import_module(
+        "src.infrastructure.database.migrations.versions.0008_tenant_audit_indexes"
+    )
+    assert head.revision == "0008"
+    assert head.down_revision == "0007"
+
+    prev = import_module("src.infrastructure.database.migrations.versions.0007_firebase_identity")
+    assert prev.revision == "0007"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_target_returns_409_not_500(mocker) -> None:
+    """A racer committing between check and flush maps to 409, not 500."""
+    from sqlalchemy.exc import IntegrityError
+
+    from src.domain.errors import DuplicateTargetError
+    from src.domain.targets.target_service import TargetService
+    from src.infrastructure.database.repositories.target_repository import (
+        TargetRepository,
+    )
+    from tests.unit.conftest import FakeSession, _principal
+
+    owner = _principal()
+    session = FakeSession()
+    raced_row = object()
+    calls = {"find": 0}
+
+    async def fake_find(_self, **kwargs):  # type: ignore[no-untyped-def]
+        calls["find"] += 1
+        return None if calls["find"] == 1 else raced_row
+
+    async def fake_flush_once(_self) -> None:
+        raise IntegrityError("INSERT INTO target", {}, Exception("unique_violation"))
+
+    mocker.patch.object(TargetRepository, "find_by_owner_and_url", fake_find)
+    mocker.patch.object(TargetRepository, "flush", fake_flush_once)
+    mocker.patch.object(TargetRepository, "add", lambda _self, _t: None)
+
+    service = TargetService(session, owner)
+    with pytest.raises(DuplicateTargetError):
+        await service.register_target(
+            hostname="example.com",
+            url="https://example.com/",
+            owner_organization_id=None,
+        )
+    assert calls["find"] == 2

@@ -31,17 +31,19 @@ from dataclasses import dataclass
 OPEN_TAG = "<untrusted_target_data>"
 CLOSE_TAG = "</untrusted_target_data>"
 
-# The literal closing tag must never appear inside the payload, or crafted
-# content could exit the untrusted frame early. Prefixing the slash with a
-# backslash (the standard neutralization) keeps it human-readable while no
-# longer matching the delimiter.
+# Either delimiter must never appear inside the payload, or crafted
+# content could exit the untrusted frame early (closing tag) or open a
+# convincing nested frame (opening tag). Prefixing with a backslash (the
+# standard neutralization) keeps both human-readable while no longer
+# matching the delimiters.
 _ESCAPE_PAIRS: tuple[tuple[str, str], ...] = (
     ("</untrusted_target_data>", "<\\/untrusted_target_data>"),
+    ("<untrusted_target_data>", "<\\untrusted_target_data>"),
 )
 
 
 def escape_untrusted(text: str) -> str:
-    """Neutralize the closing delimiter inside untrusted payloads."""
+    """Neutralize both delimiters inside untrusted payloads."""
     escaped = text
     for raw, safe in _ESCAPE_PAIRS:
         escaped = escaped.replace(raw, safe)

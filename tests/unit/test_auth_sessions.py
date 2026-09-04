@@ -229,6 +229,45 @@ async def test_refresh_success_rotates_credentials(client: AsyncClient, state) -
 
 
 @pytest.mark.asyncio
+async def test_refresh_rejects_user_deactivated_mid_request(
+    client: AsyncClient, state, mocker
+) -> None:
+    """Deactivation landing between eligibility check and mint 401s."""
+    import copy
+
+    user = _make_user()
+    row, raw = _make_session(user.id)
+    state["users"].append(user)
+    state["sessions"].append(row)
+    reads: list[bool] = []
+
+    async def flipping_get_by_id(_self, user_id):
+        found = next((u for u in state["users"] if u.id == user_id), None)
+        if found is None:
+            return None
+        # Snapshot per read (like separate DB round-trips): the service
+        # eligibility check sees the active row, then the deactivation
+        # lands, then the route re-check sees the inactive row.
+        snapshot = copy.copy(found)
+        reads.append(snapshot.is_active)
+        if len(reads) == 1:
+            found.is_active = False
+        return snapshot
+
+    mocker.patch.object(UserRepository, "get_by_id", flipping_get_by_id)
+
+    response = await client.post(
+        "/api/v1/auth/refresh",
+        headers={"X-Refresh-Request": "1"},
+        cookies=_login_cookies(user, raw),
+    )
+
+    assert reads == [True, False]
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "UNAUTHENTICATED"
+
+
+@pytest.mark.asyncio
 async def test_refresh_without_csrf_header_is_forbidden(client: AsyncClient, state) -> None:
     user = _make_user()
     _, raw = _make_session(user.id)

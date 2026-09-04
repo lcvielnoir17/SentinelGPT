@@ -245,6 +245,43 @@ async def test_exchange_rejects_invalid_token(client: AsyncClient, fake_repo_sta
 
 
 @pytest.mark.asyncio
+async def test_concurrent_first_exchange_maps_to_single_account(mocker) -> None:
+    """A racer provisioning the same UID maps to one account, not 500."""
+    from sqlalchemy.exc import IntegrityError
+
+    from src.domain.users.user_service import UserService
+
+    racer = _make_user("racer@example.com", firebase_uid="uid-race")
+
+    class _Session:
+        async def rollback(self) -> None:
+            return None
+
+    calls = {"uid": 0}
+
+    async def fake_get_by_uid(_self, uid: str):
+        calls["uid"] += 1
+        return None if calls["uid"] == 1 else racer
+
+    async def fake_get_by_email(_self, email: str):
+        return None
+
+    async def fake_flush_once(_self) -> None:
+        raise IntegrityError("INSERT INTO user", {}, Exception("unique_violation"))
+
+    mocker.patch.object(UserRepository, "get_by_firebase_uid", fake_get_by_uid)
+    mocker.patch.object(UserRepository, "get_by_email", fake_get_by_email)
+    mocker.patch.object(UserRepository, "add", lambda _self, _u: None)
+    mocker.patch.object(UserRepository, "flush", fake_flush_once)
+
+    account = await UserService(_Session()).authenticate_firebase(  # type: ignore[arg-type]
+        FirebaseIdentity(uid="uid-race", email="racer@example.com", email_verified=True)
+    )
+    assert account.id == racer.id
+    assert account.email == "racer@example.com"
+
+
+@pytest.mark.asyncio
 async def test_exchange_rejects_deactivated_account(
     client: AsyncClient, fake_repo_state, mocker
 ) -> None:

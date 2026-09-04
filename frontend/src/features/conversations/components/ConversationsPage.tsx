@@ -63,17 +63,18 @@ export function ConversationsPage() {
 
   const reply = useCallback(async () => {
     if (open === null) return;
+    const threadId = open.id;
     const content = draft.trim();
     if (!content || sending) return;
     setSending(true);
     setDraft("");
     try {
-      const response = await sendMessage(open.id, content);
-      setOpen({
-        ...open,
-        messageCount: open.messageCount + 2,
-        messages: [...open.messages, response.userMessage, response.assistantMessage],
-      });
+      await sendMessage(threadId, content);
+      // Re-read the thread instead of assuming +2: server-side counts and
+      // ordering win. The updater guard keeps a mid-send thread switch
+      // from appending this response to the wrong thread.
+      const fresh = await getConversation(threadId);
+      setOpen((prev) => (prev !== null && prev.id === threadId ? fresh : prev));
     } catch (err) {
       setDraft(content);
       setError(err instanceof ApiError ? err.message : "The AI analyst is unreachable.");

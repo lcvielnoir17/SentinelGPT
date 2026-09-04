@@ -309,3 +309,71 @@ async def test_count_conversations_per_uid(store) -> None:
     await store.create_conversation(_conversation(UID_B))
     assert await store.count_conversations(UID_A) == 2
     assert await store.count_conversations(UID_B) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Malformed-document tolerance (Firestore flavor only: the memory store     #
+# holds typed objects, so corruption can only arrive via raw documents)      #
+# --------------------------------------------------------------------------- #
+
+
+def _firestore_store() -> tuple[FirestoreConversationStore, FakeFirestore]:
+    client = FakeFirestore()
+    return FirestoreConversationStore(client), client
+
+
+def _doc_path(uid: str, conversation_id: str) -> tuple[str, ...]:
+    return ("users", uid, "conversations", conversation_id)
+
+
+async def test_malformed_conversation_reads_as_missing() -> None:
+    """A corrupt document answers None (404 upstream), never 500."""
+    store, client = _firestore_store()
+    client.docs[_doc_path(UID_A, "broken")] = {"title": "no userId here"}
+    assert await store.get_conversation(UID_A, "broken") is None
+
+
+async def test_malformed_conversation_skipped_in_list() -> None:
+    """One corrupt document must not 500 the whole history view."""
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    store, client = _firestore_store()
+    good = _conversation(UID_A)
+    await store.create_conversation(good)
+    client.docs[_doc_path(UID_A, "broken")] = {
+        "title": "bad",
+        "userId": "not-a-uuid",
+        "firebaseUid": UID_A,
+        "createdAt": _dt.now(_UTC),
+        "updatedAt": _dt.now(_UTC),
+    }
+    listed = await store.list_conversations(UID_A)
+    assert [c.id for c in listed] == [good.id]
+
+
+async def test_malformed_message_skipped_in_history() -> None:
+    """A corrupt message is skipped; the rest of the thread loads."""
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    from src.domain.conversations.models import new_message_id
+
+    store, client = _firestore_store()
+    conversation = _conversation(UID_A)
+    await store.create_conversation(conversation)
+    await store.append_message(
+        UID_A,
+        conversation.id,
+        ConversationMessage(
+            id=new_message_id(), role="user", content="hello", created_at=_dt.now(_UTC)
+        ),
+    )
+    client.docs[("users", UID_A, "conversations", conversation.id, "messages", "broken")] = {
+        "role": "user",
+        # content missing entirely
+        "createdAt": _dt.now(_UTC),
+        "seq": 999,
+    }
+    messages = await store.list_messages(UID_A, conversation.id)
+    assert [m.content for m in messages] == ["hello"]

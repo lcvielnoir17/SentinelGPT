@@ -59,6 +59,9 @@ class FakeSession:
     async def flush(self) -> None:
         return None
 
+    async def rollback(self) -> None:
+        return None
+
     async def execute(self, _stmt: object) -> None:
         class R:
             def __init__(self, rows: list) -> None:
@@ -165,3 +168,57 @@ async def test_last_admin_cannot_be_demoted_or_removed(mocker) -> None:  # type:
     service_member_admin = OrganizationService(FakeSession(), member)
     await service_member_admin.remove_member(org.id, admin.id)
     assert (org.id, admin.id) not in repo.memberships
+
+
+async def test_concurrent_duplicate_invite_is_idempotent(mocker) -> None:  # type: ignore[no-untyped-def]
+    """A racer committing between check and flush returns the row, not 500."""
+    from sqlalchemy.exc import IntegrityError
+
+    admin, member = _principal(), _principal()
+    service, repo = _make(mocker, admin)
+    org = await service.create_organization("Org")
+    existing = OrganizationMembership(
+        id=uuid.uuid4(),
+        organization_id=org.id,
+        user_id=member.id,
+        role=MEMBER,
+    )
+    repo.add_membership(existing)
+
+    calls = {"get": 0}
+    real_get = repo.get_membership
+
+    async def fake_get(org_id, user_id):  # type: ignore[no-untyped-def]
+        calls["get"] += 1
+        if calls["get"] == 1:
+            return None  # racer has not committed yet (from our viewpoint)
+        return await real_get(org_id, user_id)
+
+    async def fake_flush_once() -> None:
+        raise IntegrityError("INSERT INTO membership", {}, Exception("unique_violation"))
+
+    mocker.patch.object(repo, "get_membership", fake_get)
+    mocker.patch.object(repo, "flush", lambda: fake_flush_once())
+
+    added = await service.add_member(org.id, user_id=member.id, role=MEMBER)
+    assert added.user_id == member.id
+
+
+async def test_invite_missing_user_is_404_not_500(mocker) -> None:  # type: ignore[no-untyped-def]
+    """A dangling user reference maps to NOT_FOUND, not INTERNAL_ERROR."""
+    from sqlalchemy.exc import IntegrityError
+
+    admin, ghost = _principal(), _principal()
+    service, repo = _make(mocker, admin)
+    org = await service.create_organization("Org")
+
+    async def fake_flush_once() -> None:
+        # Simulate rollback discarding the staged row (a real session
+        # drops the pending insert; the in-memory fake stages eagerly).
+        repo.memberships.pop((org.id, ghost.id), None)
+        raise IntegrityError("INSERT INTO membership", {}, Exception("fk_violation"))
+
+    mocker.patch.object(repo, "flush", lambda: fake_flush_once())
+
+    with pytest.raises(NotFoundError):
+        await service.add_member(org.id, user_id=ghost.id, role=MEMBER)

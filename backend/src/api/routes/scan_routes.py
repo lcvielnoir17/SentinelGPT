@@ -355,7 +355,14 @@ async def render_scan_report(
             content=json.loads(body),
         )
     body = render_csv_report(document)
-    return PlainTextResponse(content=body, media_type="text/csv; charset=utf-8")
+    # Attachment delivery (not inline): combined with formula neutralization
+    # in the formatter, this keeps spreadsheet handlers from executing
+    # hostile cell content on open.
+    return PlainTextResponse(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="sentinel-scan-{scan_id}.csv"'},
+    )
 
 
 @router.get(

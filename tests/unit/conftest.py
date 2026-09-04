@@ -77,6 +77,9 @@ class FakeSession:
     async def flush(self) -> None:
         return None
 
+    async def rollback(self) -> None:
+        return None
+
     async def get(self, model: type, key: uuid.UUID) -> object | None:  # type: ignore[no-untyped-def]
         if self._resolver is None:
             return None
@@ -163,7 +166,7 @@ class FakeRepo:
             r for r in self.rows.values() if getattr(r, "initiated_by_user_id", None) == user_id
         ]
         # Mirror production: newest-first with a limit (default 50).
-        rows.sort(key=lambda r: getattr(r, "created_at"), reverse=True)
+        rows.sort(key=lambda r: r.created_at, reverse=True)
         limit = kwargs.get("limit", 50)
         assert isinstance(limit, int)
         return rows[:limit]

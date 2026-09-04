@@ -46,6 +46,7 @@ class UserService:
     """Business rules for user registration and login."""
 
     def __init__(self, session: AsyncSession) -> None:
+        self._session = session
         self._repository = UserRepository(session)
 
     async def register_user(self, email: str, password: str) -> UserAccount:
@@ -65,8 +66,18 @@ class UserService:
             created_at=now,
             updated_at=now,
         )
-        self._repository.add(user)
-        await self._repository.flush()
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            self._repository.add(user)
+            await self._repository.flush()
+        except IntegrityError as exc:
+            # A concurrent registration won the race after our existence
+            # check. Roll back and re-read to answer 409, not 500.
+            await self._session.rollback()
+            if await self._repository.get_by_email(email) is not None:
+                raise EmailAlreadyRegisteredError() from exc
+            raise
         return self._to_account(user)
 
     async def authenticate(self, email: str, password: str) -> UserAccount:
@@ -134,8 +145,21 @@ class UserService:
                 created_at=now,
                 updated_at=now,
             )
-            self._repository.add(user)
-            await self._repository.flush()
+            from sqlalchemy.exc import IntegrityError
+
+            try:
+                self._repository.add(user)
+                await self._repository.flush()
+            except IntegrityError as exc:
+                # A concurrent first-exchange won the race after our
+                # lookups. Roll back and re-resolve so both logins map to
+                # the same canonical account instead of 500ing.
+                await self._session.rollback()
+                user = await self._repository.get_by_firebase_uid(identity.uid)
+                if user is None and identity.email and identity.email_verified:
+                    user = await self._repository.get_by_email(identity.email)
+                if user is None:
+                    raise InvalidCredentialsError() from exc
 
         if not user.is_active:
             raise InvalidCredentialsError()
@@ -164,9 +188,18 @@ class UserService:
             firebase_uid=user.firebase_uid,
         )
 
-    async def get_account(self, user_id: uuid.UUID) -> UserAccount | None:
-        """Load an account by id (used post-rotation to build the response)."""
+    async def get_account(
+        self, user_id: uuid.UUID, *, require_active: bool = False
+    ) -> UserAccount | None:
+        """Load an account by id (used post-rotation to build the response).
+
+        ``require_active`` closes the deactivation race between the
+        eligibility check and token minting: a deactivated account answers
+        the same None (401 upstream) as a missing one.
+        """
         user = await self._repository.get_by_id(user_id)
         if user is None:
+            return None
+        if require_active and not user.is_active:
             return None
         return self._to_account(user)

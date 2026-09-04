@@ -10,8 +10,9 @@ import uuid
 
 import pytest
 
+from src.domain.errors import InvalidScanStateError
 from src.domain.scans.scan_service import ScanService
-from tests.unit.conftest import _principal  # noqa: F401 - shared harness
+from tests.unit.conftest import STATUS_IDS, _principal  # noqa: F401 - shared harness
 
 
 async def _three_scans(env) -> list:  # type: ignore[no-untyped-def]
@@ -76,10 +77,6 @@ async def test_cancel_queued_scan_records_audited_cancel(env) -> None:  # type: 
 
 
 async def test_cancel_from_intermediate_state_is_rejected(env) -> None:  # type: ignore[no-untyped-def]
-    from src.domain.errors import InvalidScanStateError
-
-    from tests.unit.conftest import STATUS_IDS
-
     service = ScanService(env.session, env.owner)
     details = await service.create_scan(target_id=env.target.id)
     row = env.repo.rows[details.id]
@@ -92,15 +89,14 @@ async def test_cancel_from_intermediate_state_is_rejected(env) -> None:  # type:
     from src.infrastructure.database.models import AuditLogEntry
 
     assert not [
-        e for e in env.session.added if isinstance(e, AuditLogEntry) and e.action_code == "SCAN_STATE_TRANSITION"
+        e
+        for e in env.session.added
+        if isinstance(e, AuditLogEntry) and e.action_code == "SCAN_STATE_TRANSITION"
     ]
 
 
 async def test_cancel_loses_race_with_worker_stage(env) -> None:  # type: ignore[no-untyped-def]
     """Cancel winning mid-execution aborts the job instead of corrupting it."""
-    from src.domain.errors import InvalidScanStateError
-
-    from tests.unit.conftest import STATUS_IDS
     from tests.unit.test_scans_api import OkPipeline, _analysis_result
 
     service = ScanService(env.session, env.owner)
@@ -114,9 +110,7 @@ async def test_cancel_loses_race_with_worker_stage(env) -> None:  # type: ignore
             return super().run(**kwargs)
 
     with pytest.raises(InvalidScanStateError):
-        await service.execute_scan_job(
-            details.id, pipeline=CancellingPipeline(_analysis_result())
-        )
+        await service.execute_scan_job(details.id, pipeline=CancellingPipeline(_analysis_result()))
 
     row = env.repo.rows[details.id]
     assert row.status_code == "CANCELLED"

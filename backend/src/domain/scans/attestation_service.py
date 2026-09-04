@@ -16,7 +16,7 @@ from src.domain.audit.audit_service import (
     ACTION_ATTESTATION_CONFIRMED,
     ACTION_ATTESTATION_REVOKED,
 )
-from src.domain.errors import NotFoundError
+from src.domain.errors import InvalidAttestationError, NotFoundError
 from src.infrastructure.database.models import AuthorizationAttestation
 from src.infrastructure.database.repositories.attestation_repository import (
     CONFIRMED,
@@ -84,6 +84,15 @@ class AttestationService:
     ) -> AttestationDetails:
         """Submit + auto-confirm a SELF_ATTESTATION for a visible target."""
         target = await self._require_visible_target(target_id)
+        if getattr(target, "is_archived", False):
+            # Archived targets cannot be scanned, so authorizing them would
+            # mint a CONFIRMED attestation that no scan gate can ever use.
+            raise NotFoundError()
+        if expires_at is not None:
+            if expires_at.tzinfo is None:
+                raise InvalidAttestationError()
+            if expires_at <= datetime.now(UTC):
+                raise InvalidAttestationError()
 
         attestation = AuthorizationAttestation(
             target_id=target_id,
@@ -106,6 +115,7 @@ class AttestationService:
                 "targetOwnerOrganizationId": str(
                     getattr(target, "owner_organization_id", "") or ""
                 ),
+                "ownerUserId": str(self._principal.id),
                 "expiresAt": expires_at.isoformat() if expires_at else None,
             },
             actor_user_id=self._principal.id,
@@ -124,6 +134,13 @@ class AttestationService:
             raise NotFoundError()
         await self._require_visible_target(attestation.target_id)
 
+        codes = await self._attestations.method_code_map()
+        if attestation.status == REVOKED:
+            # Idempotent re-revoke: return current state without rewriting
+            # history metadata or appending a duplicate audit row.
+            return _to_details(
+                attestation, codes.get(attestation.method_id, self.SELF_ATTESTATION_CODE)
+            )
         attestation.status = REVOKED
         attestation.revoked_at = datetime.now(UTC)
         attestation.revoked_reason = reason[:1000]
@@ -135,7 +152,6 @@ class AttestationService:
             metadata_json={"reason": reason[:1000]},
             actor_user_id=self._principal.id,
         )
-        codes = await self._attestations.method_code_map()
         return _to_details(
             attestation, codes.get(attestation.method_id, self.SELF_ATTESTATION_CODE)
         )

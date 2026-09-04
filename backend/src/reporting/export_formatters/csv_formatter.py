@@ -36,6 +36,21 @@ CSV_COLUMNS: tuple[str, ...] = (
     "remediation_summary",
 )
 
+# Spreadsheet formula prefixes (OWASP CSV Injection). Cells starting with
+# these run as formulas when the export is opened in Excel/Sheets — and
+# finding/target fields can carry attacker-controlled text (hostnames,
+# paths, header values), so every free-text cell is neutralized below.
+# Prefixing with a single quote keeps the visible content identical
+# while forcing text interpretation.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _neutralize_formula(value: str) -> str:
+    """Prefix spreadsheet-formula triggers so exports open as plain text."""
+    if value and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
 
 def _explanation_summary(finding_explanation: dict[str, object] | None) -> str:
     if not finding_explanation:
@@ -89,14 +104,14 @@ def render_csv_report(document: ReportDocument) -> str:
                 "scan_id": str(document.scan.scan_id),
                 "scan_status": document.scan.scan_status,
                 "scan_profile": document.scan.scan_profile,
-                "target_hostname": document.scan.target_hostname,
+                "target_hostname": _neutralize_formula(document.scan.target_hostname),
                 "finding_id": str(finding.id),
                 "severity": finding.severity,
                 "category": finding.category,
-                "title": finding.title,
-                "affected_asset": finding.affected_asset or "",
+                "title": _neutralize_formula(finding.title),
+                "affected_asset": _neutralize_formula(finding.affected_asset or ""),
                 "source_engine": finding.source_engine_code or "",
-                "fingerprint": finding.fingerprint or "",
+                "fingerprint": _neutralize_formula(finding.fingerprint or ""),
                 "lifecycle_status": _lifecycle_status(
                     finding.fingerprint, document.lifecycle_counts
                 ),
@@ -105,8 +120,12 @@ def render_csv_report(document: ReportDocument) -> str:
                     if finding.explanation
                     else ""
                 ),
-                "explanation_summary": _explanation_summary(finding.explanation),
-                "remediation_summary": _remediation_summary(finding.explanation),
+                "explanation_summary": _neutralize_formula(
+                    _explanation_summary(finding.explanation)
+                ),
+                "remediation_summary": _neutralize_formula(
+                    _remediation_summary(finding.explanation)
+                ),
             }
         )
     return buffer.getvalue()

@@ -8,11 +8,26 @@
 
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { ApiError } from "../../../services/apiClient";
 import { useAuth } from "../../../app/AuthContext";
 
 type Mode = "login" | "register";
+
+interface LocationState {
+  from?: unknown;
+}
+
+/** Post-login destination: the guarded deep link, or /dashboard. */
+function postLoginTarget(state: LocationState | null): string {
+  const from = state?.from;
+  // Strict same-origin path check: never honor absolute URLs or
+  // protocol-relative targets, even though only our own guard sets this.
+  if (typeof from === "string" && from.startsWith("/") && !from.startsWith("//")) {
+    return from;
+  }
+  return "/dashboard";
+}
 
 export function AuthPage() {
   const [mode, setMode] = useState<Mode>("login");
@@ -23,6 +38,7 @@ export function AuthPage() {
   const [googleBusy, setGoogleBusy] = useState(false);
   const { login, register, signInWithGoogle, firebaseEnabled } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -34,7 +50,7 @@ export function AuthPage() {
       } else {
         await register(email, password);
       }
-      navigate("/dashboard", { replace: true });
+      navigate(postLoginTarget(location.state as LocationState | null), { replace: true });
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
@@ -51,7 +67,7 @@ export function AuthPage() {
     setGoogleBusy(true);
     try {
       await signInWithGoogle();
-      navigate("/dashboard", { replace: true });
+      navigate(postLoginTarget(location.state as LocationState | null), { replace: true });
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);

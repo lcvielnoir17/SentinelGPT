@@ -335,8 +335,10 @@ async def refresh_session(
         raise NotAuthenticatedError()
 
     rotated = outcome.rotated
-    # User eligibility was already verified inside RefreshService.refresh.
-    account = await UserService(session).get_account(rotated.user_id)
+    # User eligibility was already verified inside RefreshService.refresh;
+    # re-check activity here so a deactivation landing in between cannot
+    # mint a fresh access JWT.
+    account = await UserService(session).get_account(rotated.user_id, require_active=True)
     if account is None:
         await session.commit()
         raise NotAuthenticatedError()

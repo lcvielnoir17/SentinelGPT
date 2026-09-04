@@ -28,6 +28,8 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import structlog
+
 from src.domain.conversations.models import Conversation, ConversationMessage
 from src.domain.conversations.store import (
     MAX_CONVERSATIONS_PER_USER,
@@ -37,6 +39,17 @@ from src.domain.conversations.store import (
 
 if TYPE_CHECKING:
     from src.config.settings import Settings
+
+_logger = structlog.get_logger(__name__)
+
+
+class MalformedConversationDocumentError(ValueError):
+    """A persisted document is missing fields or carries invalid types.
+
+    Documents are backend-written and client-inaccessible, so this signals
+    console tampering, a torn batch, or a legacy shape — never normal
+    operation. Read boundaries convert it to skip/404 rather than 500.
+    """
 
 
 class FirestoreConversationStore:
@@ -96,18 +109,21 @@ class FirestoreConversationStore:
 
     @staticmethod
     def _from_firestore(conversation_id: str, data: dict[str, Any]) -> Conversation:
-        scan_id = data.get("scanId")
-        return Conversation(
-            id=conversation_id,
-            user_id=uuid.UUID(data["userId"]),
-            firebase_uid=data["firebaseUid"],
-            title=data["title"],
-            scan_id=uuid.UUID(scan_id) if scan_id else None,
-            finding_id=data.get("findingId"),
-            message_count=int(data.get("messageCount", 0)),
-            created_at=_as_datetime(data.get("createdAt")),
-            updated_at=_as_datetime(data.get("updatedAt")),
-        )
+        try:
+            scan_id = data.get("scanId")
+            return Conversation(
+                id=conversation_id,
+                user_id=uuid.UUID(data["userId"]),
+                firebase_uid=data["firebaseUid"],
+                title=data["title"],
+                scan_id=uuid.UUID(scan_id) if scan_id else None,
+                finding_id=data.get("findingId"),
+                message_count=int(data.get("messageCount", 0)),
+                created_at=_as_datetime(data.get("createdAt")),
+                updated_at=_as_datetime(data.get("updatedAt")),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise MalformedConversationDocumentError(conversation_id) from exc
 
     @staticmethod
     def _message_to_firestore(message: ConversationMessage, sequence: int) -> dict[str, Any]:
@@ -120,13 +136,16 @@ class FirestoreConversationStore:
 
     @staticmethod
     def _message_from_firestore(message_id: str, data: dict[str, Any]) -> ConversationMessage:
-        return ConversationMessage(
-            id=message_id,
-            role=data["role"],
-            content=data["content"],
-            created_at=_as_datetime(data.get("createdAt")),
-            sequence=int(data["seq"]) if data.get("seq") is not None else None,
-        )
+        try:
+            return ConversationMessage(
+                id=message_id,
+                role=data["role"],
+                content=data["content"],
+                created_at=_as_datetime(data.get("createdAt")),
+                sequence=int(data["seq"]) if data.get("seq") is not None else None,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise MalformedConversationDocumentError(message_id) from exc
 
     # ------------------------------------------------------------------ #
     # ConversationStore protocol                                          #
@@ -143,7 +162,14 @@ class FirestoreConversationStore:
         snapshot = await self._conversation_ref(self._client, firebase_uid, conversation_id).get()
         if not snapshot.exists:
             return None
-        return self._from_firestore(snapshot.id, snapshot.to_dict() or {})
+        try:
+            return self._from_firestore(snapshot.id, snapshot.to_dict() or {})
+        except MalformedConversationDocumentError:
+            # A corrupt document answers as missing (404 upstream): it must
+            # never 500 the thread, and its id reveals nothing since the
+            # caller already named it.
+            _logger.warning("conversation_document_malformed", conversation_id=conversation_id)
+            return None
 
     async def list_conversations(self, firebase_uid: str, *, limit: int = 50) -> list[Conversation]:
         query = (
@@ -156,7 +182,11 @@ class FirestoreConversationStore:
         conversations: list[Conversation] = []
         async for snapshot in query.stream():
             data = snapshot.to_dict() or {}
-            conversations.append(self._from_firestore(snapshot.id, data))
+            try:
+                conversations.append(self._from_firestore(snapshot.id, data))
+            except MalformedConversationDocumentError:
+                # One corrupt document must not 500 the whole history view.
+                _logger.warning("conversation_document_malformed", conversation_id=snapshot.id)
         return conversations
 
     async def delete_conversation(self, firebase_uid: str, conversation_id: str) -> bool:
@@ -214,7 +244,14 @@ class FirestoreConversationStore:
         messages: list[ConversationMessage] = []
         async for snapshot in query.stream():
             data = snapshot.to_dict() or {}
-            messages.append(self._message_from_firestore(snapshot.id, data))
+            try:
+                messages.append(self._message_from_firestore(snapshot.id, data))
+            except MalformedConversationDocumentError:
+                _logger.warning(
+                    "conversation_message_malformed",
+                    conversation_id=conversation_id,
+                    message_id=snapshot.id,
+                )
         return messages
 
     async def count_conversations(self, firebase_uid: str) -> int:

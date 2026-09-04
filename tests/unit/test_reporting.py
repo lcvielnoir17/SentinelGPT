@@ -210,3 +210,46 @@ def test_assessment_can_be_none() -> None:
     parsed = json.loads(render_json_report(doc))
     assert parsed["assessment"] is None
     assert parsed["findings"] == []
+
+
+def test_csv_neutralizes_formula_cells() -> None:
+    """Hostile field content must not survive as executable spreadsheet formulas."""
+    import csv as csv_module
+    import io
+
+    from src.reporting.assembler import ReportScanMetadata
+    from src.reporting.export_formatters.csv_formatter import _neutralize_formula
+
+    assert _neutralize_formula('=HYPERLINK("http://evil")') == '\'=HYPERLINK("http://evil")'
+    assert _neutralize_formula("+2+3") == "'+2+3"
+    assert _neutralize_formula("-2+3") == "'-2+3"
+    assert _neutralize_formula("@SUM(A1:A2)") == "'@SUM(A1:A2)"
+    assert _neutralize_formula("\tINDIRECT(A1)") == "'\tINDIRECT(A1)"
+    # Benign content passes through untouched.
+    assert _neutralize_formula("Missing HSTS") == "Missing HSTS"
+    assert _neutralize_formula("") == ""
+    assert _neutralize_formula("https://example.test/") == "https://example.test/"
+
+    base = _sample_document()
+    hostile = ReportDocument(
+        schema_version=base.schema_version,
+        generated_at=base.generated_at,
+        scan=ReportScanMetadata(
+            target_hostname="-2+3",
+            target_normalized_url=base.scan.target_normalized_url,
+            scan_id=base.scan.scan_id,
+            scan_profile=base.scan.scan_profile,
+            scan_status=base.scan.scan_status,
+            initiated_by_user_id=base.scan.initiated_by_user_id,
+            queued_at=base.scan.queued_at,
+            started_at=base.scan.started_at,
+            completed_at=base.scan.completed_at,
+        ),
+        engines=base.engines,
+        findings=base.findings,
+        assessment=base.assessment,
+        severity_counts=base.severity_counts,
+        lifecycle_counts=base.lifecycle_counts,
+    )
+    rows = list(csv_module.DictReader(io.StringIO(render_csv_report(hostile))))
+    assert rows[0]["target_hostname"] == "'-2+3"

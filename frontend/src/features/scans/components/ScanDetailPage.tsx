@@ -9,7 +9,7 @@
  * status changes back to the database so a few-seconds poll is enough.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "../../../services/apiClient";
 import { formatDateTime, truncate } from "../../../shared/format";
@@ -97,15 +97,23 @@ export function ScanDetailPage() {
     return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [findings]);
 
+  // Sequence-guarded loader: a slow earlier poll response must never
+  // overwrite newer status (terminal flap) or set state after unmount.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = loadSeq.current + 1;
+    loadSeq.current = seq;
+    const isCurrent = () => loadSeq.current === seq;
     try {
       const next = await getScan(scanId);
+      if (!isCurrent()) return;
       setScan(next);
       if (TERMINAL_STATUSES.includes(next.status)) {
         const [rows, assessmentRow] = await Promise.all([
           listFindings(scanId).catch(() => [] as Finding[]),
           getAssessment(scanId).catch(() => null),
         ]);
+        if (!isCurrent()) return;
         setFindings(rows);
         setAssessment(assessmentRow);
         const explanationsAccumulator: Record<string, FindingExplanation> = {};
@@ -122,6 +130,7 @@ export function ScanDetailPage() {
             }
           }),
         );
+        if (!isCurrent()) return;
         setExplanations(explanationsAccumulator);
       } else {
         setFindings([]);
@@ -129,6 +138,7 @@ export function ScanDetailPage() {
         setExplanations({});
       }
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err instanceof ApiError ? err.message : "Unable to load scan.");
     }
   }, [scanId]);

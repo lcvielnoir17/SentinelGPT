@@ -56,6 +56,7 @@ class TargetService:
 
     def __init__(self, session: AsyncSession, principal: UserAccount) -> None:
         self._principal = principal
+        self._session = session
         self._repository = TargetRepository(session)
         self._memberships = MembershipRepository(session)
 
@@ -95,8 +96,24 @@ class TargetService:
             is_archived=False,
             created_at=now,
         )
-        self._repository.add(target)
-        await self._repository.flush()
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            self._repository.add(target)
+            await self._repository.flush()
+        except IntegrityError as exc:
+            # A concurrent identical insert won the race after our
+            # existence check. Roll back and re-check to distinguish a
+            # true duplicate (409) from any other constraint violation.
+            await self._session.rollback()
+            raced = await self._repository.find_by_owner_and_url(
+                owner_organization_id=owner_organization,
+                owner_user_id=owner_user,
+                normalized_url=normalized.normalized_url,
+            )
+            if raced is not None:
+                raise DuplicateTargetError() from exc
+            raise
         return _to_details(target)
 
     async def get_target(self, target_id: uuid.UUID) -> TargetDetails:

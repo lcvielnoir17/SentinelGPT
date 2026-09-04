@@ -65,6 +65,10 @@ def test_nested_frame_attempt_is_neutralized() -> None:
     inner = framed[len(OPEN_TAG) : -len(CLOSE_TAG)]
     assert CLOSE_TAG not in inner
     assert "<\\/untrusted_target_data>" in inner
+    # A forged opening tag must not survive either: it could otherwise
+    # open a convincing nested frame for weaker models.
+    assert OPEN_TAG not in inner
+    assert "<\\untrusted_target_data>" in inner
 
 
 def test_escape_untrusted_only_touches_the_delimiter() -> None:

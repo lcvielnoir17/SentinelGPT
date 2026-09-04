@@ -132,6 +132,9 @@ def test_report_endpoint_returns_csv_when_requested(
     body = response.text
     assert body.splitlines()[0].startswith("scan_id,scan_status")
     assert "MISSING_SECURITY_HEADER" in body
+    # Attachment delivery so spreadsheet handlers don't execute cells inline.
+    assert response.headers["content-disposition"].startswith("attachment;")
+    assert ".csv" in response.headers["content-disposition"]
 
 
 def test_report_endpoint_returns_404_when_assembler_returns_none(

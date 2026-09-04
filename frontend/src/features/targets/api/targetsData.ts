@@ -15,7 +15,7 @@
  * attestation failure degrades to `[]` for that target (fail-open).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listAttestations, listTargets, type Attestation, type Target } from "./targetsApi";
 
 export interface TargetsData {
@@ -111,13 +111,23 @@ export function useTargetsWithAttestations(): {
 } {
   const [data, setData] = useState<TargetsData | null>(() => fullCache?.data ?? null);
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const refresh = useCallback(async () => {
     invalidateTargetsCache();
     try {
-      setData(await loadTargetsWithAttestations());
+      const loaded = await loadTargetsWithAttestations();
+      if (!mountedRef.current) return;
+      setData(loaded);
       setError(null);
     } catch (err) {
+      if (!mountedRef.current) return;
       setError(err instanceof Error ? err.message : "Unable to load targets.");
     }
   }, []);
