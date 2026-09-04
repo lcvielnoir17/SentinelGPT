@@ -122,7 +122,6 @@ def _service(session: AsyncSession, current_user: Any) -> ScanService:
 def _maybe_gemini() -> Any:
     from src.infrastructure.secrets import get_gemini_api_key
 
-    get_settings()
     if not get_gemini_api_key():
         return None
     try:

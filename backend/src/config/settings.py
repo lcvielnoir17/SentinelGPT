@@ -98,6 +98,15 @@ class Settings(BaseSettings):
         default=False,
         description="Enable background execution of authorized scans (Phase 7+)",
     )
+    # Scanner sandbox image (ADR-0003): the Docker image the egress sandbox
+    # boots per scan attempt. Kept as an env knob (SCANNER_SANDBOX_IMAGE) so
+    # production can pin an immutable digest
+    # (e.g. ``sentinelgpt/scanner-sandbox:1.4.2@sha256:<digest>``) without a
+    # code change, while local development keeps tracking ``:latest``.
+    scanner_sandbox_image: str = Field(
+        default="sentinelgpt/scanner-sandbox:latest",
+        description="Docker image for the isolated scanner sandbox (pin a digest in production)",
+    )
 
     # Firebase Authentication (Ideathon identity bridge, ADR-0010).
     # Verifying ID tokens needs only the project ID (Google's public JWKs);

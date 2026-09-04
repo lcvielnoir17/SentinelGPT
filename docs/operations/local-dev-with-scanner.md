@@ -85,6 +85,12 @@ sentinelgpt/scanner-sandbox   latest   <image-id>   <created>   <size>
 If `prepare()` in `SandboxedScanExecutor` cannot find this image, the
 worker raises `SandboxUnavailableError("sandbox image missing: …")`.
 
+> Production note: the image is selected by the `SCANNER_SANDBOX_IMAGE`
+> environment variable (default `sentinelgpt/scanner-sandbox:latest`).
+> Production deployments should pin an immutable digest
+> (e.g. `sentinelgpt/scanner-sandbox:1.4.2@sha256:<digest>`) so a worker
+> can never boot a silently-retagged runtime.
+
 ---
 
 ## 3. Bring up the stack
