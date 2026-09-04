@@ -34,6 +34,7 @@ __all__ = [
     "ACCESS_TOKEN_COOKIE",
     "ConversationStoreDep",
     "CurrentUser",
+    "SessionDep",
     "get_conversation_agent",
     "get_conversation_store",
     "get_current_user",

@@ -12,6 +12,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from src.domain.audit.audit_service import (
+    ACTION_ATTESTATION_CONFIRMED,
+    ACTION_ATTESTATION_REVOKED,
+)
 from src.domain.errors import NotFoundError
 from src.infrastructure.database.models import AuthorizationAttestation
 from src.infrastructure.database.repositories.attestation_repository import (
@@ -92,7 +96,7 @@ class AttestationService:
         self._attestations.add(attestation)
         await self._attestations.flush()
         await self._audit.record(
-            action_code="ATTESTATION_CONFIRMED",
+            action_code=ACTION_ATTESTATION_CONFIRMED,
             entity_type="authorization_attestation",
             entity_id=attestation.id,
             metadata_json={
@@ -125,7 +129,7 @@ class AttestationService:
         attestation.revoked_reason = reason[:1000]
         await self._attestations.flush()
         await self._audit.record(
-            action_code="ATTESTATION_REVOKED",
+            action_code=ACTION_ATTESTATION_REVOKED,
             entity_type="authorization_attestation",
             entity_id=attestation.id,
             metadata_json={"reason": reason[:1000]},
@@ -135,10 +139,6 @@ class AttestationService:
         return _to_details(
             attestation, codes.get(attestation.method_id, self.SELF_ATTESTATION_CODE)
         )
-
-    async def has_active_confirmed(self, target_id: uuid.UUID) -> bool:
-        """The server-side gate used before creating/executing any scan."""
-        return await self._attestations.has_active_confirmed(target_id)
 
     async def latest_active_confirmed(self, target_id: uuid.UUID) -> AttestationDetails | None:
         attestation = await self._attestations.latest_active_confirmed(target_id)

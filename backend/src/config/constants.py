@@ -31,23 +31,8 @@ SCAN_STATUS_REPORT_READY_DEGRADED: str = "REPORT_READY_DEGRADED"
 SCAN_STATUS_REJECTED: str = "REJECTED"
 SCAN_STATUS_CANCELLED: str = "CANCELLED"
 
-# Severity Levels
-SEVERITY_INFO: str = "INFO"
-SEVERITY_LOW: str = "LOW"
-SEVERITY_MEDIUM: str = "MEDIUM"
-SEVERITY_HIGH: str = "HIGH"
-SEVERITY_CRITICAL: str = "CRITICAL"
-
 # Engine Codes
-ENGINE_KATANA: str = "katana"
-ENGINE_NUCLEI: str = "nuclei"
-ENGINE_NIKTO: str = "nikto"
 ENGINE_HEADERS: str = "headers-analyzer"
-ENGINE_SSL: str = "ssl-inspector"
-ENGINE_DNS: str = "dns-lookup"
-ENGINE_WHOIS: str = "whois-lookup"
 
 # Celery queue names (SRS Ch6 §6: separate queues per concern).
 CELERY_QUEUE_SCAN: str = "scan"
-CELERY_QUEUE_AI: str = "ai"
-CELERY_QUEUE_REPORT: str = "report"

@@ -10,17 +10,13 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser  # noqa: TC001 - FastAPI runtime
+from src.api.dependencies import CurrentUser, SessionDep  # noqa: TC001 - FastAPI runtime
 from src.domain.audit.audit_service import AuditEntryDetails, AuditService
-from src.infrastructure.database.connection import get_db_session
 
 router = APIRouter(prefix="/audit-log", tags=["Audit Log"])
-
-SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 class AuditEntryResponse(BaseModel):
@@ -47,7 +43,7 @@ def _to_response(entry: AuditEntryDetails) -> AuditEntryResponse:
 
 @router.get("", response_model=list[AuditEntryResponse], summary="Query audit entries")
 async def query_audit_log(
-    session: Annotated[AsyncSession, Depends(get_db_session)],
+    session: SessionDep,
     current_user: CurrentUser,
     entity_type: Annotated[str | None, Query(alias="entityType")] = None,
     entity_id: Annotated[uuid.UUID | None, Query(alias="entityId")] = None,
@@ -75,7 +71,7 @@ async def query_audit_log(
 )
 async def get_audit_entry(
     entry_id: uuid.UUID,
-    session: Annotated[AsyncSession, Depends(get_db_session)],
+    session: SessionDep,
     current_user: CurrentUser,
 ) -> AuditEntryResponse:
     """Direct single-entry lookup.

@@ -30,13 +30,12 @@ import asyncio
 import uuid
 from datetime import datetime
 from functools import lru_cache
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
-from fastapi import APIRouter, Depends, Header, Request, Response, status
+from fastapi import APIRouter, Header, Request, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import ACCESS_TOKEN_COOKIE, CurrentUser
+from src.api.dependencies import ACCESS_TOKEN_COOKIE, CurrentUser, SessionDep
 from src.config.constants import (
     ENV_PRODUCTION,
     ENV_STAGING,
@@ -53,11 +52,11 @@ from src.domain.users.firebase_token_service import FirebaseTokenVerifier
 from src.domain.users.refresh_service import RefreshService
 from src.domain.users.token_service import create_access_token
 from src.domain.users.user_service import UserAccount, UserService
-from src.infrastructure.database.connection import get_db_session
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
-
-SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 def _require_refresh_csrf_header(x_refresh_request: str | None) -> None:

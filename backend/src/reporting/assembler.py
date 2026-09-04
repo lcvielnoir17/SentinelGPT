@@ -216,26 +216,26 @@ class ReportAssembler:
         )
 
     async def _profile_code(self, profile_id: int) -> str:
-        from sqlalchemy import select
+        # Reports degrade to "unknown" where the scan path raises: reuse the
+        # canonical lookup, preserving the degraded-report contract.
+        from src.infrastructure.database.repositories.scan_repository import (
+            _profile_code as _canonical_profile_code,
+        )
 
-        from src.infrastructure.database.models import ScanProfile
-
-        row = (
-            await self._session.execute(
-                select(ScanProfile.code).where(ScanProfile.id == profile_id)
-            )
-        ).first()
-        return str(row[0]) if row is not None else "unknown"
+        try:
+            return await _canonical_profile_code(self._session, profile_id)
+        except LookupError:
+            return "unknown"
 
     async def _status_code(self, status_id: int) -> str:
-        from sqlalchemy import select
+        from src.infrastructure.database.repositories.scan_repository import (
+            _status_code_of as _canonical_status_code,
+        )
 
-        from src.infrastructure.database.models import ScanStatus
-
-        row = (
-            await self._session.execute(select(ScanStatus.code).where(ScanStatus.id == status_id))
-        ).first()
-        return str(row[0]) if row is not None else "unknown"
+        try:
+            return await _canonical_status_code(self._session, status_id)
+        except LookupError:
+            return "unknown"
 
     async def _engines(self, scan_id: uuid.UUID) -> tuple[ReportEngineSummary, ...]:
         from sqlalchemy import select
@@ -275,7 +275,6 @@ class ReportAssembler:
 
         from src.infrastructure.database.models import (
             FindingCategory,
-            FindingEvidence,
             ScanEngineExecution,
             ScanFinding,
             SeverityLevel,
@@ -305,25 +304,11 @@ class ReportAssembler:
             .order_by(ScanFinding.created_at.asc())
         )
 
+        all_rows = rows.all()
+        evidence_by_finding = await self._evidence_by_finding_ids([row.id for row in all_rows])
         result: list[ReportFinding] = []
-        for row in rows.all():
-            evidence_rows = await self._session.execute(
-                select(
-                    FindingEvidence.id,
-                    FindingEvidence.evidence_type,
-                    FindingEvidence.content,
-                )
-                .where(FindingEvidence.finding_id == row.id)
-                .order_by(FindingEvidence.created_at.asc())
-            )
-            ev = [
-                {
-                    "id": str(e.id),
-                    "type": e.evidence_type,
-                    "content": e.content,
-                }
-                for e in evidence_rows.all()
-            ]
+        for row in all_rows:
+            ev = evidence_by_finding.get(row.id, [])
             result.append(
                 ReportFinding(
                     id=row.id,
@@ -342,6 +327,37 @@ class ReportAssembler:
                 )
             )
         return tuple(result)
+
+    async def _evidence_by_finding_ids(
+        self, finding_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[dict[str, object]]]:
+        """One query for every finding's evidence rows (avoids per-row N+1)."""
+        from sqlalchemy import select
+
+        from src.infrastructure.database.models import FindingEvidence
+
+        if not finding_ids:
+            return {}
+        evidence_rows = await self._session.execute(
+            select(
+                FindingEvidence.finding_id,
+                FindingEvidence.id,
+                FindingEvidence.evidence_type,
+                FindingEvidence.content,
+            )
+            .where(FindingEvidence.finding_id.in_(finding_ids))
+            .order_by(FindingEvidence.created_at.asc())
+        )
+        grouped: dict[uuid.UUID, list[dict[str, object]]] = {}
+        for e in evidence_rows.all():
+            grouped.setdefault(e.finding_id, []).append(
+                {
+                    "id": str(e.id),
+                    "type": e.evidence_type,
+                    "content": e.content,
+                }
+            )
+        return grouped
 
     async def _assessment(self, scan_id: uuid.UUID) -> ReportAssessment | None:
         from sqlalchemy import select

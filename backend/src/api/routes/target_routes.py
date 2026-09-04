@@ -13,19 +13,18 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser  # noqa: TC001 - resolved by FastAPI at runtime
+from src.api.dependencies import (  # noqa: TC001 - resolved by FastAPI at runtime
+    CurrentUser,
+    SessionDep,
+)
 from src.config.constants import SCAN_STATUS_PENDING_ATTESTATION
 from src.domain.errors import InvalidPaginationCursorError
 from src.domain.targets.target_service import TargetDetails, TargetService
-from src.infrastructure.database.connection import get_db_session
 
 router = APIRouter(prefix="/targets", tags=["Targets"])
-
-SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 class CreateTargetRequest(BaseModel):

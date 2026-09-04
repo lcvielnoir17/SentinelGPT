@@ -12,20 +12,22 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Query, Response, status
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser  # noqa: TC001 - FastAPI runtime
+from src.api.dependencies import (  # noqa: TC001 - FastAPI runtime
+    CurrentUser,
+    SessionDep,
+)
 from src.config.settings import get_settings
 from src.domain.scans.scan_service import ScanDetails, ScanService
-from src.infrastructure.database.connection import get_db_session
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/scans", tags=["Scans"])
-
-SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 # --------------------------------------------------------------------- #
@@ -120,16 +122,9 @@ def _service(session: AsyncSession, current_user: Any) -> ScanService:
 
 
 def _maybe_gemini() -> Any:
-    from src.infrastructure.secrets import get_gemini_api_key
+    from src.infrastructure.ai.factory import maybe_evidence_analyzer
 
-    if not get_gemini_api_key():
-        return None
-    try:
-        from src.infrastructure.ai.gemini_provider import GeminiEvidenceAnalyzer
-
-        return GeminiEvidenceAnalyzer.from_settings()
-    except Exception:  # noqa: BLE001 - AI must degrade, never block creation
-        return None
+    return maybe_evidence_analyzer()
 
 
 # --------------------------------------------------------------------- #
@@ -321,12 +316,12 @@ async def get_finding_explanation(
 )
 async def render_scan_report(
     scan_id: uuid.UUID,
+    session: SessionDep,
+    current_user: CurrentUser,
     format: Annotated[  # noqa: A002 - public API name
         str,
         Query(pattern="^(json|csv)$", description="Report format: json or csv"),
     ] = "json",
-    session: SessionDep = None,  # type: ignore[assignment]
-    current_user: CurrentUser = None,  # type: ignore[assignment]
 ) -> Response:
     """Render the report for one scan as JSON or CSV (SRS Ch10 §4).
 

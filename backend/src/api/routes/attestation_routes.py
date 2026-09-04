@@ -9,19 +9,14 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, status
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser  # noqa: TC001 - FastAPI runtime
+from src.api.dependencies import CurrentUser, SessionDep  # noqa: TC001 - FastAPI runtime
 from src.domain.scans.attestation_service import AttestationService
-from src.infrastructure.database.connection import get_db_session
 
 router = APIRouter(tags=["Authorization Attestations"])
-
-SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 class CreateAttestationRequest(BaseModel):

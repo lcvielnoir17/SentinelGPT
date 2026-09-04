@@ -126,19 +126,12 @@ def execute_scan_job_task(
 async def _run_scan_job(scan_id: uuid.UUID) -> None:
     """Open a fresh session, run the secure chain, commit per stage."""
     from src.domain.scans.scan_service import ScanService
-    from src.infrastructure.ai.gemini_provider import GeminiEvidenceAnalyzer
-    from src.infrastructure.secrets import get_gemini_api_key
+    from src.infrastructure.ai.factory import maybe_evidence_analyzer
 
     sessionmaker = get_async_sessionmaker()
     async with sessionmaker() as session:
-        ai_analyzer: Any = None
-        if get_gemini_api_key():
-            try:
-                ai_analyzer = GeminiEvidenceAnalyzer.from_settings()
-            except Exception:  # noqa: BLE001 - AI must degrade, never block scans
-                ai_analyzer = None
         service = ScanService(session, principal=None)
-        await service.execute_scan_job(scan_id, ai_analyzer=ai_analyzer)
+        await service.execute_scan_job(scan_id, ai_analyzer=maybe_evidence_analyzer())
 
 
 async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:
@@ -158,11 +151,12 @@ async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:
     from sqlalchemy import select
 
     from src.config.constants import (
+        ENGINE_HEADERS,
         SCAN_STATUS_QUEUED,
         SCAN_STATUS_REJECTED,
         SCAN_STATUS_RUNNING,
     )
-    from src.domain.audit.audit_service import AuditService
+    from src.domain.audit.audit_service import ACTION_SCAN_STATE_TRANSITION, AuditService
     from src.infrastructure.database.models import Scan, ScanEngine
     from src.infrastructure.database.repositories.scan_repository import (
         ScanEngineExecutionRepository,
@@ -203,7 +197,7 @@ async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:
         if claimed_from_code is not None:
             engine_id_row = (
                 await session.execute(
-                    select(ScanEngine.id).where(ScanEngine.code == "headers-analyzer")
+                    select(ScanEngine.id).where(ScanEngine.code == ENGINE_HEADERS)
                 )
             ).first()
             if engine_id_row is not None:
@@ -221,7 +215,7 @@ async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:
                     error_message=reason[:500],
                 )
             await AuditService(session).record(
-                action_code="SCAN_STATE_TRANSITION",
+                action_code=ACTION_SCAN_STATE_TRANSITION,
                 entity_type="scan",
                 entity_id=scan.id,
                 metadata_json={

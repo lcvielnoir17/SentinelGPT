@@ -40,6 +40,10 @@ ACTION_ATTESTATION_REVOKED = "ATTESTATION_REVOKED"
 ACTION_SCAN_REQUESTED = "SCAN_REQUESTED"
 ACTION_SCAN_STATE_TRANSITION = "SCAN_STATE_TRANSITION"
 ACTION_AUDIT_LOG_ACCESSED = "AUDIT_LOG_ACCESSED"
+ACTION_ORGANIZATION_CREATED = "ORGANIZATION_CREATED"
+ACTION_MEMBER_ADDED = "MEMBER_ADDED"
+ACTION_MEMBER_ROLE_CHANGED = "MEMBER_ROLE_CHANGED"
+ACTION_MEMBER_REMOVED = "MEMBER_REMOVED"
 
 
 class AuditService:
@@ -109,7 +113,7 @@ class AuditService:
         rows = (await self._session.execute(stmt)).scalars().all()
         visible = [row for row in rows if self._visible_to(row, actor_user_id)]
         await self.record(
-            action_code="AUDIT_LOG_ACCESSED",
+            action_code=ACTION_AUDIT_LOG_ACCESSED,
             entity_type="audit_log",
             entity_id=actor_user_id,
             metadata_json={
@@ -167,7 +171,7 @@ class AuditService:
         if row is None or not self._visible_to(row, actor_user_id):
             return None
         await self.record(
-            action_code="AUDIT_LOG_ACCESSED",
+            action_code=ACTION_AUDIT_LOG_ACCESSED,
             entity_type="audit_log",
             entity_id=actor_user_id,
             metadata_json={

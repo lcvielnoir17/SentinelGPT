@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from src.config.constants import ENGINE_HEADERS
+
 if TYPE_CHECKING:
     from src.domain.scans.scan_service import ScanPipeline
     from src.scanning.runner import SandboxAwareEngine
@@ -24,7 +26,7 @@ if TYPE_CHECKING:
 class DefaultScanPipeline:
     """Real pipeline: fresh resolution → sandbox → transport → engine."""
 
-    engine_code = "headers-analyzer"
+    engine_code = ENGINE_HEADERS
 
     def __init__(self, *, sandbox_image: str | None = None) -> None:
         from src.domain.scanning.resolution import ScanTargetResolutionService

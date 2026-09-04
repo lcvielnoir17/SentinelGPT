@@ -8,23 +8,28 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, status
 from pydantic import AliasChoices, BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser  # noqa: TC001 - FastAPI runtime
-from src.domain.audit.audit_service import AuditService
+from src.api.dependencies import CurrentUser, SessionDep  # noqa: TC001 - FastAPI runtime
+from src.domain.audit.audit_service import (
+    ACTION_MEMBER_ADDED,
+    ACTION_MEMBER_REMOVED,
+    ACTION_MEMBER_ROLE_CHANGED,
+    ACTION_ORGANIZATION_CREATED,
+    AuditService,
+)
 from src.domain.organizations.organization_service import (
     MembershipDetails,
     OrganizationService,
 )
-from src.infrastructure.database.connection import get_db_session
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["Organizations"])
-
-SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
 class CreateOrganizationRequest(BaseModel):
@@ -87,7 +92,7 @@ async def create_organization(
     details = await _service(session, current_user).create_organization(payload.name)
     org_response = _to_org_response(details)
     await AuditService(session).record(
-        action_code="ORGANIZATION_CREATED",
+        action_code=ACTION_ORGANIZATION_CREATED,
         entity_type="organization",
         entity_id=details.id,
         metadata_json={"name": details.name},
@@ -135,7 +140,7 @@ async def add_member(
         org_id, user_id=payload.user_id, role=payload.role
     )
     await AuditService(session).record(
-        action_code="MEMBER_ADDED",
+        action_code=ACTION_MEMBER_ADDED,
         entity_type="organization",
         entity_id=org_id,
         metadata_json={"memberUserId": str(details.user_id), "role": details.role},
@@ -158,7 +163,7 @@ async def change_member_role(
 ) -> MembershipResponse:
     details = await _service(session, current_user).change_role(org_id, user_id, role=payload.role)
     await AuditService(session).record(
-        action_code="MEMBER_ROLE_CHANGED",
+        action_code=ACTION_MEMBER_ROLE_CHANGED,
         entity_type="organization",
         entity_id=org_id,
         metadata_json={"memberUserId": str(user_id), "role": details.role},
@@ -180,7 +185,7 @@ async def remove_member(
 ) -> None:
     await _service(session, current_user).remove_member(org_id, user_id)
     await AuditService(session).record(
-        action_code="MEMBER_REMOVED",
+        action_code=ACTION_MEMBER_REMOVED,
         entity_type="organization",
         entity_id=org_id,
         metadata_json={"memberUserId": str(user_id)},

@@ -128,10 +128,3 @@ def get_gemini_api_key() -> str:
         _cached_at = time.monotonic()
         _cached_is_secret = is_secret
     return key
-
-
-def client_for_tests() -> Any:
-    """Expose the (lazily imported) client type for test patching."""
-    from google.cloud import secretmanager
-
-    return secretmanager.SecretManagerServiceClient

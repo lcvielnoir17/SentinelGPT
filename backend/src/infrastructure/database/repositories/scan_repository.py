@@ -99,6 +99,18 @@ class ScanRepository:
             mapping[code] = id_
         return mapping
 
+    async def status_code_by_id(self) -> dict[int, str]:
+        """Inverse of :meth:`status_ids_by_code` for batched list hydration."""
+        rows = await self._session.execute(select(ScanStatus.id, ScanStatus.code))
+        return {int(id_): str(code) for id_, code in rows}
+
+    async def profile_code_by_id(self) -> dict[int, str]:
+        """Profile code per id (one query; avoids per-row lookups in lists)."""
+        from src.infrastructure.database.models import ScanProfile
+
+        rows = await self._session.execute(select(ScanProfile.id, ScanProfile.code))
+        return {int(id_): str(code) for id_, code in rows}
+
 
 async def _status_code_of(session: AsyncSession, status_id: int) -> str:
     from src.infrastructure.database.models import ScanStatus

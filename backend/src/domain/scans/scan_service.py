@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from sqlalchemy import select
 
 from src.config.constants import (
+    ENGINE_HEADERS,
     SCAN_STATUS_AI_ANALYSIS,
     SCAN_STATUS_CANCELLED,
     SCAN_STATUS_QUEUED,
@@ -179,10 +180,10 @@ class ScanService:
         )
         repository.add(scan)
         await repository.flush()
-        from src.domain.audit.audit_service import AuditService
+        from src.domain.audit.audit_service import ACTION_SCAN_REQUESTED, AuditService
 
         await AuditService(self._session).record(
-            action_code="SCAN_REQUESTED",
+            action_code=ACTION_SCAN_REQUESTED,
             entity_type="scan",
             entity_id=scan.id,
             metadata_json={
@@ -210,13 +211,25 @@ class ScanService:
             ScanRepository,
         )
 
-        rows = await ScanRepository(self._session).list_for_user(
+        repository = ScanRepository(self._session)
+        rows = await repository.list_for_user(
             (self._assert_principal()).id,
             target_id=target_id,
             status_code=status_code,
             limit=limit,
         )
-        return [await self._details(row) for row in rows]
+        # Batched hydration: one status map + one profile map for the whole
+        # page instead of two lookups per row (1+2N queries → 3).
+        status_by_id = await repository.status_code_by_id()
+        profile_by_id = await repository.profile_code_by_id()
+        return [
+            self._details_from_codes(
+                row,
+                status_code=status_by_id[row.status_id],
+                profile_code=profile_by_id[row.scan_profile_id],
+            )
+            for row in rows
+        ]
 
     async def rescan_scan(self, scan_id: uuid.UUID) -> ScanDetails:
         """Create a new scan linked to ``scan_id`` as parent.
@@ -249,10 +262,10 @@ class ScanService:
         )
         repository.add(new_scan)
         await repository.flush()
-        from src.domain.audit.audit_service import AuditService
+        from src.domain.audit.audit_service import ACTION_SCAN_REQUESTED, AuditService
 
         await AuditService(self._session).record(
-            action_code="SCAN_REQUESTED",
+            action_code=ACTION_SCAN_REQUESTED,
             entity_type="scan",
             entity_id=new_scan.id,
             metadata_json={
@@ -443,10 +456,13 @@ class ScanService:
             scan.authorization_attestation_id
         )
         if attestation is None or not _attestation_active(attestation):
-            from src.domain.audit.audit_service import AuditService
+            from src.domain.audit.audit_service import (
+                ACTION_SCAN_STATE_TRANSITION,
+                AuditService,
+            )
 
             await AuditService(self._session).record(
-                action_code="SCAN_STATE_TRANSITION",
+                action_code=ACTION_SCAN_STATE_TRANSITION,
                 entity_type="scan",
                 entity_id=scan.id,
                 metadata_json={
@@ -484,7 +500,7 @@ class ScanService:
         origin = await self._origin_for_target(scan.target_id)
 
         executions = ScanEngineExecutionRepository(self._session)
-        engine_code = getattr(effective_pipeline, "engine_code", "headers-analyzer")
+        engine_code = getattr(effective_pipeline, "engine_code", ENGINE_HEADERS)
         engine_version = getattr(effective_pipeline, "engine_version", "1")
         execution_row = await executions.create(
             scan_id=scan.id,
@@ -496,9 +512,12 @@ class ScanService:
         await self._session.commit()
 
         loop = asyncio.get_running_loop()
-        from src.domain.audit.audit_service import AuditService as _Audit
+        from src.domain.audit.audit_service import (
+            ACTION_SCAN_STATE_TRANSITION,
+            AuditService,
+        )
 
-        audit = _Audit(self._session)
+        audit = AuditService(self._session)
         try:
             analysis_result = await loop.run_in_executor(
                 None,
@@ -511,7 +530,7 @@ class ScanService:
                 ),
             )
             await audit.record(
-                action_code="SCAN_STATE_TRANSITION",
+                action_code=ACTION_SCAN_STATE_TRANSITION,
                 entity_type="scan",
                 entity_id=scan.id,
                 metadata_json={
@@ -529,7 +548,7 @@ class ScanService:
                 error_message=type(exc).__name__,
             )
             await audit.record(
-                action_code="SCAN_STATE_TRANSITION",
+                action_code=ACTION_SCAN_STATE_TRANSITION,
                 entity_type="scan",
                 entity_id=scan.id,
                 metadata_json={
@@ -631,19 +650,9 @@ class ScanService:
         await self._session.commit()
 
     def _maybe_gemini_analyzer(self) -> Any | None:
-        from src.config.settings import get_settings
+        from src.infrastructure.ai.factory import maybe_evidence_analyzer
 
-        get_settings()
-        from src.infrastructure.secrets import get_gemini_api_key
-
-        if not get_gemini_api_key():
-            return None
-        try:
-            from src.infrastructure.ai.gemini_provider import GeminiEvidenceAnalyzer
-
-            return GeminiEvidenceAnalyzer.from_settings()
-        except Exception:  # noqa: BLE001 - AI must degrade, never block scans
-            return None
+        return maybe_evidence_analyzer()
 
     @staticmethod
     def _build_per_finding_fallback_payload(analysis_result: Any) -> dict[str, object]:
@@ -705,6 +714,10 @@ class ScanService:
             )
 
             profile_code = await _profile_code(self._session, scan.scan_profile_id)
+        return self._details_from_codes(scan, status_code=status_code, profile_code=profile_code)
+
+    @staticmethod
+    def _details_from_codes(scan: Scan, *, status_code: str, profile_code: str) -> ScanDetails:
         return ScanDetails(
             id=scan.id,
             target_id=scan.target_id,
@@ -1066,7 +1079,7 @@ def _attestation_active(attestation: AuthorizationAttestation) -> bool:
     return attestation.expires_at > datetime.now(UTC)
 
 
-async def _engine_id(session: AsyncSession, code: str = "headers-analyzer") -> int:
+async def _engine_id(session: AsyncSession, code: str = ENGINE_HEADERS) -> int:
     from sqlalchemy import select
 
     from src.infrastructure.database.models import ScanEngine

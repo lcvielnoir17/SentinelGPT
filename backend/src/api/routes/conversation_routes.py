@@ -184,14 +184,7 @@ async def get_conversation(
 ) -> ConversationDetailResponse:
     conversation, messages = await service.get_conversation(user, conversation_id)
     return ConversationDetailResponse(
-        id=conversation.id,
-        title=conversation.title,
-        user_id=conversation.user_id,
-        scan_id=conversation.scan_id,
-        finding_id=conversation.finding_id,
-        message_count=conversation.message_count,
-        created_at=conversation.created_at,
-        updated_at=conversation.updated_at,
+        **_to_response(conversation).model_dump(),
         messages=[_to_message_response(m) for m in messages],
     )
 
