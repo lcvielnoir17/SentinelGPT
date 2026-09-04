@@ -28,6 +28,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Named so the worker image (infra/docker/worker.Dockerfile:
+    # FROM sentinelgpt-api) resolves on a fresh `up --build`.
+    image: sentinelgpt-api
     container_name: sentinelgpt-api
     restart: unless-stopped
     # No host port binding here — the reverse proxy (production overlay) or the
