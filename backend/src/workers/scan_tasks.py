@@ -137,14 +137,13 @@ async def _run_scan_job(scan_id: uuid.UUID) -> None:
 async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:
     """Move a stuck scan to REJECTED when the worker cannot recover.
 
-    A worker failure may occur either before the scan is claimed
-    (QUEUED) or after the domain service has transitioned it to
-    RUNNING. The original implementation required QUEUED, which stranded
-    scans in RUNNING forever whenever the worker's exception path ran
-    after the QUEUED→RUNNING claim. This implementation tries each
-    non-terminal post-claim state in order and is a no-op if the scan is
-    already terminal (REPORT_READY*, REJECTED, CANCELLED), so the worker
-    remains idempotent on retry.
+    A worker failure may occur before the scan is claimed (QUEUED), right
+    after the claim (RUNNING), or between the stage commits of
+    ``execute_scan_job`` (SCAN_COMPLETE, PARTIALLY_COMPLETE, AI_ANALYSIS).
+    This implementation tries every non-terminal post-claim state in
+    pipeline order and is a no-op if the scan is already terminal
+    (REPORT_READY*, REJECTED, CANCELLED), so the worker remains idempotent
+    on retry.
     """
     from datetime import UTC, datetime
 
@@ -152,9 +151,12 @@ async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:
 
     from src.config.constants import (
         ENGINE_HEADERS,
+        SCAN_STATUS_AI_ANALYSIS,
+        SCAN_STATUS_PARTIALLY_COMPLETE,
         SCAN_STATUS_QUEUED,
         SCAN_STATUS_REJECTED,
         SCAN_STATUS_RUNNING,
+        SCAN_STATUS_SCAN_COMPLETE,
     )
     from src.domain.audit.audit_service import ACTION_SCAN_STATE_TRANSITION, AuditService
     from src.infrastructure.database.models import Scan, ScanEngine
@@ -171,14 +173,17 @@ async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:
             return
         status_ids = await repository.status_ids_by_code()
 
-        # Try the post-claim state first (the failure path that used to
-        # strand scans in RUNNING), then fall back to the pre-claim
+        # Try the post-claim states first in pipeline order (the failure
+        # paths that used to strand scans), then fall back to the pre-claim
         # QUEUED state so the original worker gate is preserved exactly.
-        # If neither matches, the scan is already terminal or in another
+        # If none matches, the scan is already terminal or in another
         # non-terminal state managed by the domain path; the optimistic
         # guard makes this naturally idempotent on retry.
         candidate_attempts: list[tuple[str, int]] = [
             (SCAN_STATUS_RUNNING, status_ids[SCAN_STATUS_RUNNING]),
+            (SCAN_STATUS_SCAN_COMPLETE, status_ids[SCAN_STATUS_SCAN_COMPLETE]),
+            (SCAN_STATUS_PARTIALLY_COMPLETE, status_ids[SCAN_STATUS_PARTIALLY_COMPLETE]),
+            (SCAN_STATUS_AI_ANALYSIS, status_ids[SCAN_STATUS_AI_ANALYSIS]),
             (SCAN_STATUS_QUEUED, status_ids[SCAN_STATUS_QUEUED]),
         ]
 

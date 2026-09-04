@@ -48,7 +48,7 @@ from src.domain.scans.fingerprinting import (
     UnsupportedFingerprintCategory,
     generate_fingerprint_from_finding,
 )
-from src.domain.scans.lifecycle import is_terminal
+from src.domain.scans.lifecycle import can_transition
 from src.domain.scans.lifecycle_finding import derive_lifecycle_status
 from src.infrastructure.database.models import (
     AuthorizationAttestation,
@@ -219,17 +219,25 @@ class ScanService:
             limit=limit,
         )
         # Batched hydration: one status map + one profile map for the whole
-        # page instead of two lookups per row (1+2N queries → 3).
+        # page instead of two lookups per row (1+2N queries → 3). Missing
+        # seed ids raise LookupError, matching the pre-batch per-row path.
         status_by_id = await repository.status_code_by_id()
         profile_by_id = await repository.profile_code_by_id()
-        return [
-            self._details_from_codes(
-                row,
-                status_code=status_by_id[row.status_id],
-                profile_code=profile_by_id[row.scan_profile_id],
+        details: list[ScanDetails] = []
+        for row in rows:
+            try:
+                status_code = status_by_id[row.status_id]
+                profile_code = profile_by_id[row.scan_profile_id]
+            except KeyError as exc:
+                raise LookupError(f"unseeded lookup id for scan {row.id}") from exc
+            details.append(
+                self._details_from_codes(
+                    row,
+                    status_code=status_code,
+                    profile_code=profile_code,
+                )
             )
-            for row in rows
-        ]
+        return details
 
     async def rescan_scan(self, scan_id: uuid.UUID) -> ScanDetails:
         """Create a new scan linked to ``scan_id`` as parent.
@@ -376,7 +384,13 @@ class ScanService:
             )
 
             current = await _status_code_of(self._session, scan.status_id)
-        if is_terminal(current) or current == SCAN_STATUS_RUNNING_CODE:
+        # The state machine is authoritative: CANCELLED is reachable only
+        # from QUEUED (scans are born QUEUED; PENDING_ATTESTATION never
+        # materializes as a scan row). A read-then-write race with the
+        # worker is still possible, so the optimistic transition below is
+        # the final arbiter — but an already-invalid edge must never even
+        # be attempted (e.g. SCAN_COMPLETE/AI_ANALYSIS → CANCELLED).
+        if not can_transition(current, SCAN_STATUS_CANCELLED_CODE):
             raise InvalidScanStateError()
 
         repository = ScanRepository(self._session)
@@ -389,6 +403,23 @@ class ScanService:
         )
         if not moved:
             raise InvalidScanStateError()
+        from src.domain.audit.audit_service import (
+            ACTION_SCAN_STATE_TRANSITION,
+            AuditService,
+        )
+
+        await AuditService(self._session).record(
+            action_code=ACTION_SCAN_STATE_TRANSITION,
+            entity_type="scan",
+            entity_id=scan.id,
+            metadata_json={
+                "from": current,
+                "to": SCAN_STATUS_CANCELLED_CODE,
+                "ownerUserId": str(scan.initiated_by_user_id),
+            },
+            actor_user_id=self._assert_principal().id,
+            occurred_at=datetime.now(UTC),
+        )
         refreshed = await repository.get_by_id(scan.id)
         assert refreshed is not None
         return await self._details(refreshed)
@@ -486,12 +517,15 @@ class ScanService:
                 completed_at=datetime.now(UTC),
                 error_message="authorization attestation no longer valid",
             )
-            await repository.try_transition(
+            if not await repository.try_transition(
                 scan.id,
                 from_status_id=status_ids[SCAN_STATUS_RUNNING_CODE],
                 to_status_id=status_ids[SCAN_STATUS_REJECTED_CODE],
                 set_completed_at=datetime.now(UTC),
-            )
+            ):
+                # Lost a race after recording REJECTED (e.g. cancel won):
+                # surface it so the worker reaps whatever state actually won.
+                raise InvalidScanStateError()
             await self._session.commit()
             return
 
@@ -559,28 +593,38 @@ class ScanService:
                 },
                 occurred_at=datetime.now(UTC),
             )
-            await repository.try_transition(
+            if not await repository.try_transition(
                 scan.id,
                 from_status_id=status_ids[SCAN_STATUS_RUNNING_CODE],
                 to_status_id=status_ids[SCAN_STATUS_REJECTED_CODE],
                 set_completed_at=datetime.now(UTC),
-            )
+            ):
+                # Lost a race after recording REJECTED (e.g. cancel won):
+                # surface it so the worker reaps whatever state actually won.
+                raise InvalidScanStateError() from exc
             await self._session.commit()
             return
 
         await executions.mark(execution_row.id, status="SUCCEEDED", completed_at=datetime.now(UTC))
         await self._persist_findings(executions, execution_row.id, analysis_result)
 
-        await repository.try_transition(
+        # Stage edges are optimistic: a concurrent mutation (cancel winning
+        # the race, duplicate worker delivery) must abort the job instead of
+        # persisting artifacts under a status that never advances. The
+        # worker maps the resulting InvalidScanStateError to REJECTED (a
+        # no-op when cancel already won with CANCELLED).
+        if not await repository.try_transition(
             scan.id,
             from_status_id=status_ids[SCAN_STATUS_RUNNING_CODE],
             to_status_id=status_ids[SCAN_STATUS_SCAN_COMPLETE_CODE],
-        )
-        await repository.try_transition(
+        ):
+            raise InvalidScanStateError()
+        if not await repository.try_transition(
             scan.id,
             from_status_id=status_ids[SCAN_STATUS_SCAN_COMPLETE_CODE],
             to_status_id=status_ids[SCAN_STATUS_AI_CODE],
-        )
+        ):
+            raise InvalidScanStateError()
         await self._session.commit()
 
         from src.domain.scanning.analysis.evidence import EvidenceSet
@@ -641,12 +685,14 @@ class ScanService:
             unsupported_claim_count=_coerce_count(payload),
             payload=payload,
         )
-        await repository.try_transition(
+        if not await repository.try_transition(
             scan.id,
             from_status_id=status_ids[SCAN_STATUS_AI_CODE],
             to_status_id=status_ids[final_status],
             set_completed_at=datetime.now(UTC),
-        )
+        ):
+            # Same optimistic-race contract as the earlier stage edges.
+            raise InvalidScanStateError()
         await self._session.commit()
 
     def _maybe_gemini_analyzer(self) -> Any | None:

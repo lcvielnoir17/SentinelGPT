@@ -227,10 +227,14 @@ async def test_queued_scan_still_transitions_to_rejected(
     await _mark_scan_rejected(repo.scan.id, "queued-boom")
 
     assert repo._scan.status_id == SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]
-    # The RUNNING attempt happens first and is a no-op for a QUEUED scan;
-    # the QUEUED attempt succeeds. The audit "from" is the actual source.
+    # RUNNING, SCAN_COMPLETE, PARTIALLY_COMPLETE, AI_ANALYSIS are tried in
+    # pipeline order before the QUEUED fallback; the QUEUED attempt succeeds.
+    # The audit "from" is the actual source.
     assert repo.attempts == [
         (SCAN_STATUS_IDS[SCAN_STATUS_RUNNING], SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]),
+        (SCAN_STATUS_IDS["SCAN_COMPLETE"], SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]),
+        (SCAN_STATUS_IDS["PARTIALLY_COMPLETE"], SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]),
+        (SCAN_STATUS_IDS["AI_ANALYSIS"], SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]),
         (SCAN_STATUS_IDS[SCAN_STATUS_QUEUED], SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]),
     ]
     assert audit.records[0]["metadata_json"]["from"] == SCAN_STATUS_QUEUED
@@ -247,9 +251,12 @@ async def test_already_rejected_scan_is_idempotent(
 
     await _mark_scan_rejected(repo.scan.id, "retry")
 
-    # Neither attempt succeeds, so no spurious audit or execution row.
+    # All five candidates miss, so no spurious audit or execution row.
     assert repo.attempts == [
         (SCAN_STATUS_IDS[SCAN_STATUS_RUNNING], SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]),
+        (SCAN_STATUS_IDS["SCAN_COMPLETE"], SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]),
+        (SCAN_STATUS_IDS["PARTIALLY_COMPLETE"], SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]),
+        (SCAN_STATUS_IDS["AI_ANALYSIS"], SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]),
         (SCAN_STATUS_IDS[SCAN_STATUS_QUEUED], SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]),
     ]
     assert audit.records == []
@@ -271,6 +278,37 @@ async def test_already_terminal_report_ready_is_idempotent(
     assert repo._scan.status_id == SCAN_STATUS_IDS["REPORT_READY"]
     assert audit.records == []
     assert execs.created == []
+
+
+async def test_scan_complete_intermediate_is_reaped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash between stage commits must not strand SCAN_COMPLETE."""
+    repo = _TransitionRepo(current_status_code="SCAN_COMPLETE")
+    audit = _AuditRecorder()
+    execs = _EngineExecRepo()
+    _wire(monkeypatch, repo=repo, audit=audit, execs=execs, engine_id=42)
+
+    await _mark_scan_rejected(repo.scan.id, "mid-pipeline")
+
+    assert repo._scan.status_id == SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]
+    assert audit.records[0]["metadata_json"]["from"] == "SCAN_COMPLETE"
+    assert len(execs.created) == 1
+
+
+async def test_ai_analysis_intermediate_is_reaped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash during the AI phase must not strand AI_ANALYSIS."""
+    repo = _TransitionRepo(current_status_code="AI_ANALYSIS")
+    audit = _AuditRecorder()
+    execs = _EngineExecRepo()
+    _wire(monkeypatch, repo=repo, audit=audit, execs=execs, engine_id=42)
+
+    await _mark_scan_rejected(repo.scan.id, "mid-ai")
+
+    assert repo._scan.status_id == SCAN_STATUS_IDS[SCAN_STATUS_REJECTED]
+    assert audit.records[0]["metadata_json"]["from"] == "AI_ANALYSIS"
 
 
 async def test_running_scan_transitions_when_engine_row_missing(

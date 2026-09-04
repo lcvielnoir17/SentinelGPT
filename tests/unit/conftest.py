@@ -158,13 +158,24 @@ class FakeRepo:
     async def get_by_id(self, scan_id: uuid.UUID) -> object | None:
         return self.rows.get(scan_id)
 
-    async def list_for_user(self, user_id: uuid.UUID, **_: object) -> list:
-        return [
+    async def list_for_user(self, user_id: uuid.UUID, **kwargs: object) -> list:
+        rows = [
             r for r in self.rows.values() if getattr(r, "initiated_by_user_id", None) == user_id
         ]
+        # Mirror production: newest-first with a limit (default 50).
+        rows.sort(key=lambda r: getattr(r, "created_at"), reverse=True)
+        limit = kwargs.get("limit", 50)
+        assert isinstance(limit, int)
+        return rows[:limit]
 
     async def status_ids_by_code(self) -> dict[str, int]:
         return dict(STATUS_IDS)
+
+    async def status_code_by_id(self) -> dict[int, str]:
+        return {i: c for c, i in STATUS_IDS.items()}
+
+    async def profile_code_by_id(self) -> dict[int, str]:
+        return {1: "quick-check", 2: "standard", 3: "full-assessment"}
 
 
 class FakeExecRepo:

@@ -174,7 +174,12 @@ def test_finding_explanation_returns_fallback_when_finding_not_in_scan(
     client_with_user: tuple[TestClient, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Cross-tenant probes: finding exists but not in this scan → fallback."""
+    """Cross-tenant probes are indistinguishable from unknown ids.
+
+    A finding that exists but not in this scan MUST answer byte-identically
+    to an unknown finding id: distinguishing the two would be a
+    cross-tenant existence oracle.
+    """
     client, _ = client_with_user
     finding_id = uuid.uuid4()
     scan_id = uuid.uuid4()
@@ -205,7 +210,7 @@ def test_finding_explanation_returns_fallback_when_finding_not_in_scan(
     assert response.status_code == 200
     body = response.json()
     assert body["validationStatus"] == "FALLBACK_USED"
-    assert body["fallbackReason"] == "finding_not_in_scan"
+    assert body["fallbackReason"] == "finding_not_found"
 
 
 def test_finding_explanation_returns_fallback_when_finding_missing(

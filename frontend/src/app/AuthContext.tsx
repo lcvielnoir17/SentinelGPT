@@ -35,6 +35,7 @@ import {
 } from "../features/auth/api/authApi";
 import { ApiError, setUnauthorizedHandler } from "../services/apiClient";
 import { firebaseEnabled as isFirebaseEnabled, getFirebaseAuth } from "../services/firebase";
+import { invalidateTargetsCache } from "../features/targets/api/targetsData";
 
 type BootstrapState = "pending" | "ready";
 
@@ -95,6 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const response = await apiLogin(email, password);
+    // Drop any cached rows from a previous identity in this tab.
+    invalidateTargetsCache();
     setUser(response.user);
   }, []);
 
@@ -104,6 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Auto-login after successful registration so the flow
       // ("register → land on dashboard") works in one pass.
       const response = await apiLogin(email, password);
+      invalidateTargetsCache();
       setUser(response.user);
     },
     [],
@@ -117,6 +121,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await apiLogout();
     } catch {
       // Swallow — local sign-out proceeds regardless.
+    }
+    // The module-level targets cache must not survive the identity:
+    // otherwise the next login in this tab briefly renders the previous
+    // user's rows. Best-effort Firebase sign-out as well so the Google
+    // account chooser does not silently re-offer the old session.
+    invalidateTargetsCache();
+    try {
+      const { getAuth, signOut } = await import("firebase/auth");
+      const { getApps } = await import("firebase/app");
+      if (getApps().length > 0) {
+        await signOut(getAuth());
+      }
+    } catch {
+      // Firebase absent or already signed out — nothing to do.
     }
     setUser(null);
   }, []);
@@ -141,6 +159,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const credential = await popup.signInWithPopup(auth, provider);
     const idToken = await credential.user.getIdToken();
     const response = await apiFirebaseLogin(idToken);
+    invalidateTargetsCache();
     setUser(response.user);
   }, []);
 

@@ -106,12 +106,16 @@ class OrganizationService:
         self, org_id: uuid.UUID, member_user_id: uuid.UUID, *, role: str
     ) -> MembershipDetails:
         membership = await self._require_admin_and_get(org_id, member_user_id)
+        if membership.role == ROLE_ADMIN and role != ROLE_ADMIN:
+            await self._require_remaining_admin(org_id, member_user_id)
         membership.role = role
         await self._session.flush()
         return _to_membership_details(membership)
 
     async def remove_member(self, org_id: uuid.UUID, member_user_id: uuid.UUID) -> None:
         membership = await self._require_admin_and_get(org_id, member_user_id)
+        if membership.role == ROLE_ADMIN:
+            await self._require_remaining_admin(org_id, member_user_id)
         await self._memberships.delete_membership(membership)
         await self._memberships.flush()
 
@@ -123,6 +127,13 @@ class OrganizationService:
 
     async def _is_admin(self, org_id: uuid.UUID) -> bool:
         return await self._memberships.is_admin(self._principal.id, org_id)
+
+    async def _require_remaining_admin(self, org_id: uuid.UUID, member_user_id: uuid.UUID) -> None:
+        """Refuse to demote/remove the last ADMIN (unrecoverable tenant)."""
+        members = await self._memberships.list_members(org_id)
+        admins = [m for m in members if m.role == ROLE_ADMIN]
+        if len(admins) <= 1 and any(m.user_id == member_user_id for m in admins):
+            raise ForbiddenError()
 
     async def _require_admin_and_get(
         self, org_id: uuid.UUID, member_user_id: uuid.UUID

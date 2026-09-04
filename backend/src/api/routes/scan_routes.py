@@ -255,12 +255,15 @@ async def get_finding_explanation(
         }
 
     # Confirm the finding belongs to this scan (cross-scan isolation).
+    # The response is deliberately IDENTICAL to the unknown-id case above:
+    # distinguishing "exists elsewhere" from "exists nowhere" would be a
+    # cross-tenant existence oracle, so both answer the same way.
     findings_in_scan = await repository.list_finding_dtos(scan_id)
     if not any(str(row["id"]) == str(finding_id) for row in findings_in_scan):
         return {
             "available": False,
             "validationStatus": "FALLBACK_USED",
-            "fallbackReason": "finding_not_in_scan",
+            "fallbackReason": "finding_not_found",
         }
 
     assessment = await repository.get_assessment(scan_id)

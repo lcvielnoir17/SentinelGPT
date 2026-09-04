@@ -56,6 +56,57 @@ function notifyUnauthorized(): void {
   }
 }
 
+/**
+ * Silent session refresh (AuthContext never calls `/auth/refresh` directly).
+ *
+ * The access JWT lives 15 minutes while the refresh credential lives 7
+ * days. When any data request answers 401, exactly one refresh flight runs
+ * (concurrent 401s share it) and the original request retries once against
+ * the rotated cookies. Only when the refresh itself fails is the session
+ * genuinely dead and the unauthorized handler fired — so idle users are
+ * not bounced to /login every 15 minutes.
+ *
+ * The refresh endpoint requires the `X-Refresh-Request` CSRF header and
+ * the HttpOnly refresh cookie; both attach automatically same-origin.
+ */
+let refreshInflight: Promise<boolean> | null = null;
+
+function isSessionEndpoint(path: string): boolean {
+  return path === "/auth/refresh" || path === "/auth/logout";
+}
+
+async function tryRefreshSession(): Promise<boolean> {
+  if (!refreshInflight) {
+    refreshInflight = (async () => {
+      try {
+        const response = await fetch(`${BASE_URL}/auth/refresh`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "X-Refresh-Request": "1" },
+        });
+        return response.ok;
+      } catch {
+        return false;
+      } finally {
+        refreshInflight = null;
+      }
+    })();
+  }
+  return refreshInflight;
+}
+
+async function doFetch(path: string, init: RequestInit): Promise<Response> {
+  const response = await fetch(`${BASE_URL}${path}`, init);
+  // Refresh exactly once per request; auth endpoints and already-retried
+  // requests never loop (the retry below goes through no further refresh).
+  if (response.status === 401 && !isSessionEndpoint(path)) {
+    if (await tryRefreshSession()) {
+      return fetch(`${BASE_URL}${path}`, init);
+    }
+  }
+  return response;
+}
+
 export async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {},
@@ -76,7 +127,7 @@ export async function apiRequest<T>(
     init.body = JSON.stringify(options.body);
   }
 
-  const response = await fetch(`${BASE_URL}${path}`, init);
+  const response = await doFetch(path, init);
 
   if (response.status === 401) {
     notifyUnauthorized();
@@ -126,6 +177,10 @@ export async function apiRequest<T>(
 /**
  * Like apiRequest but returns the raw Response — used for blob downloads
  * (e.g. report export) where the JSON envelope isn't applicable.
+ *
+ * 401s go through the same silent-refresh path; a surviving 401 still
+ * fires the unauthorized handler so an expired session redirects to
+ * /login instead of stranding the download with a generic error.
  */
 export async function apiRequestRaw(
   path: string,
@@ -145,5 +200,9 @@ export async function apiRequestRaw(
   if (options.body !== undefined) {
     init.body = JSON.stringify(options.body);
   }
-  return fetch(`${BASE_URL}${path}`, init);
+  const response = await doFetch(path, init);
+  if (response.status === 401) {
+    notifyUnauthorized();
+  }
+  return response;
 }

@@ -140,3 +140,28 @@ async def test_unknown_member_removal_is_404(mocker) -> None:  # type: ignore[no
 
     with pytest.raises(NotFoundError):
         await service.remove_member(org.id, stranger.id)
+
+
+async def test_last_admin_cannot_be_demoted_or_removed(mocker) -> None:  # type: ignore[no-untyped-def]
+    """Sole ADMIN is protected: demotion/removal would orphan the tenant."""
+    admin, member = _principal(), _principal()
+    service, repo = _make(mocker, admin)
+    org = await service.create_organization("Solo Org")
+    await service.add_member(org.id, user_id=member.id, role=MEMBER)
+
+    with pytest.raises(ForbiddenError):
+        await service.change_role(org.id, admin.id, role=MEMBER)
+    with pytest.raises(ForbiddenError):
+        await service.remove_member(org.id, admin.id)
+    # Guard refused before mutating: sole admin still present.
+    assert repo.memberships[(org.id, admin.id)].role == ADMIN
+
+    # With a second ADMIN present, demotion/removal of one is allowed.
+    await service.change_role(org.id, member.id, role=ADMIN)
+    changed = await service.change_role(org.id, admin.id, role=MEMBER)
+    assert changed.role == MEMBER
+    from src.domain.organizations.organization_service import OrganizationService
+
+    service_member_admin = OrganizationService(FakeSession(), member)
+    await service_member_admin.remove_member(org.id, admin.id)
+    assert (org.id, admin.id) not in repo.memberships

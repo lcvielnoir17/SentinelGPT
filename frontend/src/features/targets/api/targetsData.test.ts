@@ -81,6 +81,16 @@ describe("loadTargetsWithAttestations", () => {
     expect(data.attestations["t2"]).toEqual([]);
   });
 
+  it("does not cache degraded snapshots", async () => {
+    mockedListAttestations.mockRejectedValueOnce(new Error("boom"));
+    await loadTargetsWithAttestations();
+    expect(mockedListAttestations).toHaveBeenCalledTimes(2);
+
+    // Next mount refetches instead of serving the degraded snapshot.
+    await loadTargetsWithAttestations();
+    expect(mockedListAttestations).toHaveBeenCalledTimes(4);
+  });
+
   it("rejects the whole load when the target list fails", async () => {
     mockedListTargets.mockRejectedValueOnce(new Error("down"));
     await expect(loadTargetsWithAttestations()).rejects.toThrow("down");

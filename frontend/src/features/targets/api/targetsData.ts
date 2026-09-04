@@ -56,24 +56,34 @@ export function loadTargets(): Promise<Target[]> {
   return targetsInflight;
 }
 
-async function fetchFull(): Promise<TargetsData> {
+async function fetchFull(): Promise<TargetsData & { degraded: boolean }> {
   const targets = await loadTargets();
+  let degraded = false;
   const pairs = await Promise.all(
     targets.map((t) =>
       listAttestations(t.id)
         .then((rows) => [t.id, rows] as const)
-        .catch(() => [t.id, []] as const),
+        .catch(() => {
+          // Fail-open per target (preserved), but mark the snapshot so it
+          // is served this mount only and never cached: a transient
+          // attestation outage must not pin "Self-attest" for 30s.
+          degraded = true;
+          return [t.id, []] as const;
+        }),
     ),
   );
-  return { targets, attestations: Object.fromEntries(pairs) };
+  return { targets, attestations: Object.fromEntries(pairs), degraded };
 }
 
 /** Cached targets + per-target attestations (ScansPage, TargetsPage). */
 export function loadTargetsWithAttestations(): Promise<TargetsData> {
   if (fullCache && fresh(fullCache.at)) return Promise.resolve(fullCache.data);
   if (!fullInflight) {
-    fullInflight = fetchFull().then((data) => {
-      fullCache = { at: Date.now(), data };
+    fullInflight = fetchFull().then((result) => {
+      const { degraded, ...data } = result;
+      if (!degraded) {
+        fullCache = { at: Date.now(), data };
+      }
       fullInflight = null;
       return data;
     });
