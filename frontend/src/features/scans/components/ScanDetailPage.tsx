@@ -89,6 +89,31 @@ export function ScanDetailPage() {
   const [rescanLink, setRescanLink] = useState<string | null>(null);
   // Which finding's analyst conversation is open (null = all closed).
   const [chatFindingId, setChatFindingId] = useState<string | null>(null);
+  // Client-side findings triage: severity filter + text search. Filtering
+  // never hides data server-side — the full list stays in `findings` and
+  // report downloads always export every finding.
+  const [severityFilter, setSeverityFilter] = useState<string>("all");
+  const [findingQuery, setFindingQuery] = useState("");
+
+  const visibleFindings = useMemo(() => {
+    if (findings === null) return null;
+    const query = findingQuery.trim().toLowerCase();
+    return findings.filter((f) => {
+      if (severityFilter !== "all" && f.severity !== severityFilter) return false;
+      if (query === "") return true;
+      return (
+        f.title.toLowerCase().includes(query) ||
+        f.description.toLowerCase().includes(query) ||
+        f.location.toLowerCase().includes(query)
+      );
+    });
+  }, [findings, severityFilter, findingQuery]);
+
+  const severityOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const f of findings ?? []) counts.set(f.severity, (counts.get(f.severity) ?? 0) + 1);
+    return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [findings]);
 
   const load = useCallback(async () => {
     try {
@@ -334,8 +359,51 @@ export function ScanDetailPage() {
               : "Findings appear after the scan reaches a terminal status."}
           </p>
         ) : (
-          <ul className="findings">
-            {findings.map((f) => {
+          <>
+            <div className="form-row" role="search" aria-label="Filter findings">
+              <div className="field">
+                <label htmlFor="finding-severity">Severity</label>
+                <select
+                  id="finding-severity"
+                  value={severityFilter}
+                  onChange={(e) => setSeverityFilter(e.target.value)}
+                >
+                  <option value="all">All severities ({findings.length})</option>
+                  {severityOptions.map(([severity, count]) => (
+                    <option key={severity} value={severity}>
+                      {severity} ({count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="finding-search">Search</label>
+                <input
+                  id="finding-search"
+                  type="search"
+                  value={findingQuery}
+                  onChange={(e) => setFindingQuery(e.target.value)}
+                  placeholder="Title, description, or location…"
+                />
+              </div>
+            </div>
+            {visibleFindings !== null && visibleFindings.length === 0 && (
+              <p className="muted">
+                No findings match the current filter.{" "}
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => {
+                    setSeverityFilter("all");
+                    setFindingQuery("");
+                  }}
+                >
+                  Clear filters
+                </button>
+              </p>
+            )}
+            <ul className="findings">
+              {(visibleFindings ?? []).map((f) => {
               const exp = explanations[f.id];
               const chatOpen = chatFindingId === f.id;
               return (
@@ -395,6 +463,7 @@ export function ScanDetailPage() {
               );
             })}
           </ul>
+          </>
         )}
       </div>
 

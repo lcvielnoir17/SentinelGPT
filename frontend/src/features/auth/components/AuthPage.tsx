@@ -1,6 +1,9 @@
 /**
- * Login / registration screen — Phase 0 deliverable (SRS Chapter 15, Section 2:
- * "a working login screen against a stubbed auth endpoint").
+ * Login / registration screen (SRS Chapter 15, Section 2).
+ *
+ * Supports email/password login + registration against the session-cookie
+ * auth API, and Google sign-in via Firebase when the backend has a project
+ * configured (see AuthContext.firebaseEnabled).
  */
 
 import { useState } from "react";

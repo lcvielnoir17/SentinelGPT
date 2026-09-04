@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "../../../services/apiClient";
 import {
   listAttestations,
@@ -46,6 +46,7 @@ function statusPillClass(status: Scan["status"]): string {
 
 export function ScansPage() {
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const initialTargetId = params.get("targetId") ?? "";
 
   const [scans, setScans] = useState<Scan[] | null>(null);
@@ -103,8 +104,10 @@ export function ScansPage() {
     try {
       const created = await createScan({ targetId, scanProfile: profile });
       await refresh();
-      // Navigate into the new scan so the user can watch it progress.
-      window.location.assign(`/scans/${created.id}`);
+      // Client-side navigation into the new scan so the user can watch it
+      // progress (stays inside the SPA: no full-page reload, auth context
+      // and in-flight state are preserved).
+      navigate(`/scans/${created.id}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Unable to create scan.");
     } finally {
