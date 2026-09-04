@@ -105,13 +105,26 @@ def get_conversation_store() -> ConversationStore:
 _agent_cache: tuple[str, str, Any] | None = None
 
 
+def _cache_key_digest(api_key: str) -> str:
+    """SHA-256 digest identifying a cached agent's key without retaining it.
+
+    The module-global agent cache must never hold raw secret material: the
+    digest is sufficient to detect a rotation (which simply builds the next
+    agent) while keeping the key itself out of long-lived process state.
+    """
+    import hashlib
+
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
 def get_conversation_agent() -> Any | None:
     """The Gemini multi-turn agent, or None when no API key is resolvable.
 
     The agent — and the HTTP client pool inside the genai Client — is
     cached per (key, model) pair so a chat turn does not pay connection
     setup on every request. A rotated secret key simply builds the next
-    agent; the single-entry cache keeps memory bounded.
+    agent; the single-entry cache keeps memory bounded. Only a digest of
+    the key is retained for the comparison, never the key itself.
     """
     from src.infrastructure.secrets import get_gemini_api_key
 
@@ -121,7 +134,8 @@ def get_conversation_agent() -> Any | None:
     if not api_key:
         return None
     model = settings.gemini_flash_model
-    if _agent_cache is not None and _agent_cache[0] == api_key and _agent_cache[1] == model:
+    digest = _cache_key_digest(api_key)
+    if _agent_cache is not None and _agent_cache[0] == digest and _agent_cache[1] == model:
         return _agent_cache[2]
     try:
         from src.infrastructure.ai.gemini_chat_agent import GeminiConversationAgent
@@ -129,7 +143,7 @@ def get_conversation_agent() -> Any | None:
         agent = GeminiConversationAgent(api_key=api_key, model=model)
     except Exception:  # noqa: BLE001 - AI must degrade, never block requests
         return None
-    _agent_cache = (api_key, model, agent)
+    _agent_cache = (digest, model, agent)
     return agent
 
 
