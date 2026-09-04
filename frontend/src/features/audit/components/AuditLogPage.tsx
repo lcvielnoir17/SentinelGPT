@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ApiError } from "../../../services/apiClient";
+import { formatDateTime, truncate } from "../../../shared/format";
 import {
   getAuditEntry,
   listAuditEntries,
@@ -128,9 +129,7 @@ function AuditEntryList({ onSelectedId }: { onSelectedId: (id: string) => void }
             <tbody>
               {state.entries.map((entry) => (
                 <tr key={entry.id}>
-                  <td className="small">
-                    {new Date(entry.occurredAt).toLocaleString()}
-                  </td>
+                  <td className="small">{formatDateTime(entry.occurredAt)}</td>
                   <td className="mono small">{entry.actionCode}</td>
                   <td className="mono small">
                     {entry.entityType}/{truncate(entry.entityId, 12)}
@@ -229,7 +228,7 @@ function AuditEntryDetail({
 function AuditEntryDetailCard({ entry }: { entry: AuditEntry }) {
   const rows = useMemo(
     () => [
-      { label: "Occurred at", value: new Date(entry.occurredAt).toLocaleString() },
+      { label: "Occurred at", value: formatDateTime(entry.occurredAt) },
       { label: "Action", value: entry.actionCode, mono: true },
       { label: "Entity type", value: entry.entityType, mono: true },
       { label: "Entity id", value: entry.entityId, mono: true },
@@ -257,9 +256,4 @@ function AuditEntryDetailCard({ entry }: { entry: AuditEntry }) {
       </div>
     </>
   );
-}
-
-function truncate(value: string, max: number): string {
-  if (value.length <= max) return value;
-  return `${value.slice(0, max)}…`;
 }

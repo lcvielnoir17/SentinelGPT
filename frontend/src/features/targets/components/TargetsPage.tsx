@@ -6,62 +6,45 @@
  *   2. POST .../attestations  → status = CONFIRMED  (enables scan creation)
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError } from "../../../services/apiClient";
+import { formatDateTime } from "../../../shared/format";
+import { isAttested } from "../../../shared/attestations";
 import {
   createSelfAttestation,
   createTarget,
-  listAttestations,
-  listTargets,
   setTargetArchived,
   type Attestation,
   type Target,
 } from "../api/targetsApi";
+import { useTargetsWithAttestations } from "../api/targetsData";
 
 type LoadState =
   | { kind: "loading" }
   | { kind: "ready"; targets: Target[] }
   | { kind: "error"; message: string };
 
-function isAttested(attestations: Attestation[]): boolean {
-  return attestations.some(
-    (a) => a.status === "CONFIRMED" && (a.expiresAt === null || new Date(a.expiresAt) > new Date()),
-  );
-}
-
 export function TargetsPage() {
-  const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const [attestations, setAttestations] = useState<Record<string, Attestation[]>>({});
+  const {
+    data,
+    error: loadError,
+    refresh: reloadTargets,
+  } = useTargetsWithAttestations();
   const [hostname, setHostname] = useState("");
   const [url, setUrl] = useState("https://");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setState({ kind: "loading" });
-    try {
-      const list = await listTargets();
-      setState({ kind: "ready", targets: list.items });
-      const attestationResults = await Promise.all(
-        list.items.map((t) =>
-          listAttestations(t.id)
-            .then((rows) => [t.id, rows] as const)
-            .catch(() => [t.id, []] as const),
-        ),
-      );
-      setAttestations(Object.fromEntries(attestationResults));
-    } catch (err) {
-      setState({
-        kind: "error",
-        message: err instanceof ApiError ? err.message : "Unable to load targets.",
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  // Preserve the screen's loading/error/ready contract; rows now come from
+  // the shared cached loader instead of a per-mount fan-out.
+  const state: LoadState =
+    data !== null
+      ? { kind: "ready", targets: data.targets }
+      : loadError !== null
+        ? { kind: "error", message: loadError }
+        : { kind: "loading" };
+  const attestations: Record<string, Attestation[]> = data?.attestations ?? {};
 
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -71,7 +54,7 @@ export function TargetsPage() {
       await createTarget({ hostname: hostname.trim(), url: url.trim() });
       setHostname("");
       setUrl("https://");
-      await refresh();
+      await reloadTargets();
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Unable to create target.");
     } finally {
@@ -84,7 +67,7 @@ export function TargetsPage() {
     setActionError(null);
     try {
       await createSelfAttestation(targetId);
-      await refresh();
+      await reloadTargets();
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Unable to submit attestation.");
     } finally {
@@ -97,7 +80,7 @@ export function TargetsPage() {
     setActionError(null);
     try {
       await setTargetArchived(target.id, !target.isArchived);
-      await refresh();
+      await reloadTargets();
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : "Unable to update target.");
     } finally {
@@ -188,7 +171,7 @@ export function TargetsPage() {
                     )}
                   </td>
                   <td>{t.isArchived ? "Yes" : "No"}</td>
-                  <td className="small">{new Date(t.createdAt).toLocaleString()}</td>
+                  <td className="small">{formatDateTime(t.createdAt)}</td>
                   <td className="actions-col">
                     {!attested && !t.isArchived && (
                       <button

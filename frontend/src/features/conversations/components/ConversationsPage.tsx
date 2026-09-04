@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError } from "../../../services/apiClient";
+import { formatDateTime } from "../../../shared/format";
 import {
   deleteConversation,
   getConversation,
@@ -116,7 +117,7 @@ export function ConversationsPage() {
                 </button>
                 <span className="muted small">
                   {c.messageCount} message{c.messageCount === 1 ? "" : "s"} ·{" "}
-                  {new Date(c.updatedAt).toLocaleString()}
+                  {formatDateTime(c.updatedAt)}
                 </span>
                 {c.scanId && (
                   <Link className="small" to={`/scans/${c.scanId}`}>

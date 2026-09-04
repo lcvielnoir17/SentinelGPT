@@ -25,7 +25,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import type { UserAccount } from "../features/auth/api/authApi";
 import {
   login as apiLogin,
@@ -125,14 +124,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Firebase bridge (ADR-0010): the popup produces a Google ID token; the
   // backend verifies it against Google's public keys and issues the same
   // HttpOnly cookie session as email/password login. The Firebase session
-  // itself is not consulted again — the cookie session is canonical.
+  // itself is not consulted again — the cookie session is canonical. The
+  // SDK loads on demand so non-Google users never download it.
   const signInWithGoogle = useCallback(async () => {
-    const auth = getFirebaseAuth();
+    const auth = await getFirebaseAuth();
     if (auth === null) {
       throw new Error("Firebase sign-in is not configured on this deployment.");
     }
-    const provider = new GoogleAuthProvider();
-    const credential = await signInWithPopup(auth, provider);
+    let popup: typeof import("firebase/auth");
+    try {
+      popup = await import("firebase/auth");
+    } catch {
+      throw new Error("Firebase sign-in failed to load. Check your connection and retry.");
+    }
+    const provider = new popup.GoogleAuthProvider();
+    const credential = await popup.signInWithPopup(auth, provider);
     const idToken = await credential.user.getIdToken();
     const response = await apiFirebaseLogin(idToken);
     setUser(response.user);

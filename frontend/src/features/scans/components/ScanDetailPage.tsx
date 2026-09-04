@@ -12,6 +12,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "../../../services/apiClient";
+import { formatDateTime, truncate } from "../../../shared/format";
+import { statusPillClass } from "../../../shared/scanStatus";
 import { downloadScanReport } from "../../reports/reportsApi";
 import { ConversationPanel } from "../../conversations/components/ConversationPanel";
 import {
@@ -54,26 +56,6 @@ const RESCAN_ELIGIBLE_STATUSES: Scan["status"][] = [
   "REPORT_READY",
   "REPORT_READY_DEGRADED",
 ];
-
-function statusPillClass(status: Scan["status"]): string {
-  switch (status) {
-    case "REPORT_READY":
-      return "pill pill-ok";
-    case "REPORT_READY_DEGRADED":
-      return "pill pill-warn";
-    case "REJECTED":
-    case "CANCELLED":
-      return "pill pill-bad";
-    case "RUNNING":
-    case "SCAN_COMPLETE":
-    case "AI_ANALYSIS":
-    case "PARTIALLY_COMPLETE":
-      return "pill pill-info";
-    case "QUEUED":
-    default:
-      return "pill pill-muted";
-  }
-}
 
 export function ScanDetailPage() {
   const { scanId = "" } = useParams<{ scanId: string }>();
@@ -261,15 +243,15 @@ export function ScanDetailPage() {
         </div>
         <div>
           <span className="meta-label">Queued</span>
-          <span>{scan.queuedAt ? new Date(scan.queuedAt).toLocaleString() : "—"}</span>
+          <span>{formatDateTime(scan.queuedAt)}</span>
         </div>
         <div>
           <span className="meta-label">Started</span>
-          <span>{scan.startedAt ? new Date(scan.startedAt).toLocaleString() : "—"}</span>
+          <span>{formatDateTime(scan.startedAt)}</span>
         </div>
         <div>
           <span className="meta-label">Completed</span>
-          <span>{scan.completedAt ? new Date(scan.completedAt).toLocaleString() : "—"}</span>
+          <span>{formatDateTime(scan.completedAt)}</span>
         </div>
       </div>
 
@@ -632,13 +614,8 @@ function ComparePanel({ currentScan }: { currentScan: Scan }) {
 
 function formatScanOption(scan: Scan): string {
   const stamp = scan.completedAt ?? scan.queuedAt ?? scan.createdAt;
-  const when = stamp ? new Date(stamp).toLocaleString() : "—";
+  const when = formatDateTime(stamp);
   return `${scan.status} · ${when} · ${truncate(scan.id, 8)}`;
-}
-
-function truncate(value: string, max: number): string {
-  if (value.length <= max) return value;
-  return `${value.slice(0, max)}…`;
 }
 
 function CompareResultView({ result }: { result: CompareResponse }) {

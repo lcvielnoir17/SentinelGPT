@@ -10,39 +10,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "../../../services/apiClient";
+import { formatDateTime } from "../../../shared/format";
+import { statusPillClass } from "../../../shared/scanStatus";
+import { isAttested } from "../../../shared/attestations";
 import {
-  listAttestations,
   type Attestation,
   type Target,
-  listTargets,
 } from "../../targets/api/targetsApi";
+import { loadTargetsWithAttestations } from "../../targets/api/targetsData";
 import { createScan, listScans, type Scan, type ScanProfile } from "../api/scansApi";
-
-function isAttested(attestations: Attestation[]): boolean {
-  return attestations.some(
-    (a) => a.status === "CONFIRMED" && (a.expiresAt === null || new Date(a.expiresAt) > new Date()),
-  );
-}
-
-function statusPillClass(status: Scan["status"]): string {
-  switch (status) {
-    case "REPORT_READY":
-      return "pill pill-ok";
-    case "REPORT_READY_DEGRADED":
-      return "pill pill-warn";
-    case "REJECTED":
-    case "CANCELLED":
-      return "pill pill-bad";
-    case "RUNNING":
-    case "SCAN_COMPLETE":
-    case "AI_ANALYSIS":
-    case "PARTIALLY_COMPLETE":
-      return "pill pill-info";
-    case "QUEUED":
-    default:
-      return "pill pill-muted";
-  }
-}
 
 export function ScansPage() {
   const [params] = useSearchParams();
@@ -59,17 +35,15 @@ export function ScansPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [rows, targetList] = await Promise.all([listScans({ limit: 100 }), listTargets()]);
+      // Targets + attestations come from the shared cached loader: mounting
+      // Targets → Scans reuses rows instead of refetching the fan-out.
+      const [rows, targetData] = await Promise.all([
+        listScans({ limit: 100 }),
+        loadTargetsWithAttestations(),
+      ]);
       setScans(rows);
-      setTargets(targetList.items);
-      const attestResults = await Promise.all(
-        targetList.items.map((t) =>
-          listAttestations(t.id)
-            .then((rows) => [t.id, rows] as const)
-            .catch(() => [t.id, []] as const),
-        ),
-      );
-      setAttestations(Object.fromEntries(attestResults));
+      setTargets(targetData.targets);
+      setAttestations(targetData.attestations);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Unable to load scans.");
     }
@@ -195,9 +169,9 @@ export function ScansPage() {
                   <span className={statusPillClass(s.status)}>{s.status}</span>
                 </td>
                 <td className="mono small">{s.scanProfile}</td>
-                <td className="small">{s.queuedAt ? new Date(s.queuedAt).toLocaleString() : "—"}</td>
-                <td className="small">{s.startedAt ? new Date(s.startedAt).toLocaleString() : "—"}</td>
-                <td className="small">{s.completedAt ? new Date(s.completedAt).toLocaleString() : "—"}</td>
+                <td className="small">{formatDateTime(s.queuedAt)}</td>
+                <td className="small">{formatDateTime(s.startedAt)}</td>
+                <td className="small">{formatDateTime(s.completedAt)}</td>
                 <td className="actions-col">
                   <Link className="link-button" to={`/scans/${s.id}`}>
                     View

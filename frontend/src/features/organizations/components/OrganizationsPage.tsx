@@ -14,8 +14,9 @@
  * authorization: a 403 from the backend surfaces verbatim.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { ApiError } from "../../../services/apiClient";
+import { formatDateTime } from "../../../shared/format";
 import {
   addMember,
   changeMemberRole,
@@ -294,11 +295,8 @@ function OrganizationPanel({
   onChangeRole: (member: Membership, role: OrganizationRole) => Promise<void>;
   onRemove: (member: Membership) => Promise<void>;
 }) {
-  const [reloadKey, setReloadKey] = useState(0);
-  useEffect(() => {
-    setReloadKey((k) => k + 1);
-  }, [organization.id]);
-
+  // Key the form by organization so switching orgs resets its inputs; no
+  // extra render pass needed.
   return (
     <>
       <div className="card metadata">
@@ -312,15 +310,13 @@ function OrganizationPanel({
         </div>
         <div>
           <span className="meta-label">Created</span>
-          <span className="small">
-            {new Date(organization.createdAt).toLocaleString()}
-          </span>
+          <span className="small">{formatDateTime(organization.createdAt)}</span>
         </div>
       </div>
 
       <div className="card">
         <h3>Add member</h3>
-        <form onSubmit={onAdd} className="form-row-inner" key={reloadKey}>
+        <form onSubmit={onAdd} className="form-row-inner" key={organization.id}>
           <div className="field">
             <label htmlFor="member-userId">User id (UUID)</label>
             <input
@@ -386,9 +382,7 @@ function OrganizationPanel({
                         {member.role}
                       </span>
                     </td>
-                    <td className="small">
-                      {new Date(member.createdAt).toLocaleString()}
-                    </td>
+                    <td className="small">{formatDateTime(member.createdAt)}</td>
                     <td className="actions-col">
                       <button
                         type="button"

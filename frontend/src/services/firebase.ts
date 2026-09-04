@@ -11,10 +11,14 @@
  * When the variables are absent (plain local development) every helper
  * returns null and the UI hides the Firebase sign-in affordances — the
  * existing email/password session flow remains fully functional.
+ *
+ * The Firebase SDK itself is loaded lazily (dynamic `import()`): the ~300KB
+ * auth bundle is fetched only when the user actually signs in with Google,
+ * never as part of the initial page load.
  */
 
-import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
-import { getAuth, type Auth } from "firebase/auth";
+import type { Auth } from "firebase/auth";
+import type { FirebaseApp } from "firebase/app";
 
 const FIREBASE_API_KEY = import.meta.env.VITE_FIREBASE_API_KEY as string | undefined;
 const FIREBASE_PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined;
@@ -24,13 +28,15 @@ export const firebaseEnabled = Boolean(FIREBASE_API_KEY && FIREBASE_PROJECT_ID);
 
 let cachedAuth: Auth | null = null;
 
-export function getFirebaseAuth(): Auth | null {
+export async function getFirebaseAuth(): Promise<Auth | null> {
   if (!firebaseEnabled) {
     return null;
   }
   if (cachedAuth !== null) {
     return cachedAuth;
   }
+  const { initializeApp, getApps } = await import("firebase/app");
+  const { getAuth } = await import("firebase/auth");
   const app: FirebaseApp =
     getApps()[0] ??
     initializeApp({

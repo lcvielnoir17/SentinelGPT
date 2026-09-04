@@ -14,6 +14,7 @@
 
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./AppLayout";
+import { useAuth } from "./AuthContext";
 import { AuthPage } from "../features/auth/components/AuthPage";
 import { AuditLogPage } from "../features/audit/components/AuditLogPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
@@ -23,6 +24,13 @@ import { ScansPage } from "../features/scans/components/ScansPage";
 import { ScanDetailPage } from "../features/scans/components/ScanDetailPage";
 import { TargetsPage } from "../features/targets/components/TargetsPage";
 import { RequireAuth } from "./RequireAuth";
+
+/** Unknown URLs bounce authenticated users to /dashboard, guests to /login. */
+function FallbackRedirect() {
+  const { user, bootstrap } = useAuth();
+  if (bootstrap !== "ready") return null;
+  return <Navigate to={user ? "/dashboard" : "/login"} replace />;
+}
 
 export function App() {
   return (
@@ -44,7 +52,7 @@ export function App() {
         <Route path="/audit-log" element={<AuditLogPage />} />
       </Route>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<FallbackRedirect />} />
     </Routes>
   );
 }

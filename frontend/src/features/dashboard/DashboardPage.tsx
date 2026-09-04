@@ -10,28 +10,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError } from "../../services/apiClient";
-import { listTargets, type Target } from "../targets/api/targetsApi";
+import { formatDateTime } from "../../shared/format";
+import { statusPillClass } from "../../shared/scanStatus";
+import { type Target } from "../targets/api/targetsApi";
+import { loadTargets } from "../targets/api/targetsData";
 import { listScans, type Scan } from "../scans/api/scansApi";
-
-function statusPillClass(status: Scan["status"]): string {
-  switch (status) {
-    case "REPORT_READY":
-      return "pill pill-ok";
-    case "REPORT_READY_DEGRADED":
-      return "pill pill-warn";
-    case "REJECTED":
-    case "CANCELLED":
-      return "pill pill-bad";
-    case "RUNNING":
-    case "SCAN_COMPLETE":
-    case "AI_ANALYSIS":
-    case "PARTIALLY_COMPLETE":
-      return "pill pill-info";
-    case "QUEUED":
-    default:
-      return "pill pill-muted";
-  }
-}
 
 export function DashboardPage() {
   const [targets, setTargets] = useState<Target[] | null>(null);
@@ -42,9 +25,14 @@ export function DashboardPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [t, s] = await Promise.all([listTargets(), listScans({ limit: 5 })]);
+        // One page sized for the recent-scans table; the stat cards derive
+        // from the same rows so the dashboard costs a single scans request.
+        // (Previously limit=5, which also misreported "Total scans" as ≤5.)
+        // Targets come from the shared cache (no extra request after visiting
+        // Targets/Scans).
+        const [t, s] = await Promise.all([loadTargets(), listScans({ limit: 100 })]);
         if (cancelled) return;
-        setTargets(t.items);
+        setTargets(t);
         setScans(s);
       } catch (err) {
         if (cancelled) return;
@@ -92,7 +80,7 @@ export function DashboardPage() {
           </Link>
         </div>
         <div className="card stat">
-          <span className="meta-label">Total scans</span>
+          <span className="meta-label">Recent scans</span>
           <span className="stat-value">{scans === null ? "—" : scans.length}</span>
           <span className="muted small">Most recent {scans?.length ?? 0} shown below</span>
         </div>
@@ -121,9 +109,7 @@ export function DashboardPage() {
                     <span className={statusPillClass(s.status)}>{s.status}</span>
                   </td>
                   <td className="mono small">{s.scanProfile}</td>
-                  <td className="small">
-                    {s.queuedAt ? new Date(s.queuedAt).toLocaleString() : "—"}
-                  </td>
+                  <td className="small">{formatDateTime(s.queuedAt)}</td>
                   <td className="actions-col">
                     <Link className="link-button" to={`/scans/${s.id}`}>
                       View
