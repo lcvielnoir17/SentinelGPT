@@ -1,6 +1,6 @@
 """Gated scan execution chain (ADR-0002/0003).
 
-The ONLY sanctioned path from a target name toward any future scanner:
+The ONLY sanctioned path from a target name toward a scanner engine:
 
     normalize (registration-time, existing)
       -> fresh DNS resolution        [ScanTargetResolutionService]
@@ -10,14 +10,16 @@ The ONLY sanctioned path from a target name toward any future scanner:
       -> sandbox establishment       [kernel-level egress; fail-closed]
       -> verification                [rule dump must equal the policy]
       -> require_scan_context        [Phase B gate]
-      -> ENGINE GATE                 [still SCANNER_EXECUTION_BLOCKED]
+      -> ENGINE GATE                 [SandboxedScanExecutor.enable_execution]
 
 No step can be skipped or reordered: the sandbox is created through an
 injected factory that accepts the validated binding's policy object and
-nothing else, and every exit path destroys the sandbox. Because no engine
-implementation exists yet, execution still ends in
-``ScannerExecutionBlockedError`` even when the whole chain succeeds —
-real engines arrive only after this gate is deliberately opened.
+nothing else, and every exit path destroys the sandbox. Execution reaches
+a real engine (``scanning/engines/http_analysis.py``) only when the
+executor is composed with ``enable_execution=True`` — which happens in
+exactly one place, the production composition root
+(``domain/scans/pipeline.py``, ADR-0009). Every other construction keeps
+the gate closed and ends in ``ScannerExecutionBlockedError``.
 """
 
 from __future__ import annotations

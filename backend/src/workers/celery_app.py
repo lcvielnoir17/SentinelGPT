@@ -19,11 +19,10 @@ Security notes:
 * The default broker and result backend are read from the existing
   ``Settings`` (no env knobs added), keeping secrets management centralized.
 * ``task_acks_late=True`` is OFF by default: tasks acknowledge after the
-  successful database commit. A crash mid-execution therefore leaves the
-  scan in ``RUNNING`` and the next worker re-claims it only if the scan
-  state machine allows the transition back to ``RUNNING`` from ``REJECTED``
-  (it does not, by design). This is the honest outcome: the scan surfaces
-  its failure and an operator re-queues it explicitly.
+  successful database commit. A crash mid-execution is mapped to a
+  terminal scan state by ``scan_tasks._mark_scan_rejected`` (idempotent
+  QUEUED/RUNNING → REJECTED; already-terminal scans are a no-op), so a
+  stranded ``RUNNING`` row is reaped rather than left for an operator.
 """
 
 from __future__ import annotations

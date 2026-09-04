@@ -7,6 +7,13 @@ and the degradation is logged.
 
 Counters are incremented AFTER admission so a rejected request does not
 consume budget, and expire after one window.
+
+Concurrency note: the check-then-increment sequence is not atomic, so a
+burst of simultaneous requests may admit slightly more than ``limit`` in
+one window. This is accepted: the limiter is an abuse throttle, not a
+security boundary — tenant isolation is enforced independently in the
+conversation service, and quota enforcement (max conversations) uses the
+authoritative store.
 """
 
 from __future__ import annotations
