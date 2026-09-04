@@ -1,0 +1,4 @@
+# SentinelGPT line-ending policy: LF everywhere, enforced on commit.
+# CI runs on Linux and several gates (git diff --check, OpenAPI byte-compare)
+# assume LF-only text. Windows checkouts must not introduce CRLF.
+* text=auto eol=lf

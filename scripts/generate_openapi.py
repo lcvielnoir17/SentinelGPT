@@ -83,7 +83,10 @@ def main() -> None:
     app = create_application()
     schema: dict[str, Any] = app.openapi()
     _enforce_csrf_header_required(schema)
-    OUTPUT_PATH.write_text(json.dumps(schema, indent=2))
+    # ``newline="\n"`` keeps regeneration byte-identical on Windows and
+    # Linux: the committed artifact is LF-only, and the default text-mode
+    # translation would otherwise flip every line to CRLF on Windows.
+    OUTPUT_PATH.write_text(json.dumps(schema, indent=2), newline="\n")
     paths = sorted(schema["paths"].keys())
     print(f"Wrote {OUTPUT_PATH.relative_to(REPO_ROOT)}")
     print(f"Total paths: {len(paths)}")
