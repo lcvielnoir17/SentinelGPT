@@ -67,9 +67,22 @@ if ! gcloud secrets describe jwt-secret-key --project "$PROJECT_ID" >/dev/null 2
     printf '%s' "$JWT_SECRET" \
         | gcloud secrets create jwt-secret-key --data-file=- --project "$PROJECT_ID"
 fi
+# The Cloud SQL password is never passed as a plaintext --set-env-vars value
+# (which would persist in the revision spec). The fully-composed DATABASE_URL
+# is stored as a secret version instead, and injected via --set-secrets.
+DB_URL="postgresql+asyncpg://${SA_NAME}:${PG_PASSWORD}@/sentinelgpt?host=/cloudsql/${PROJECT_ID}:${REGION}:${PG_INSTANCE}"
+if ! gcloud secrets describe pg-database-url --project "$PROJECT_ID" >/dev/null 2>&1; then
+    printf '%s' "$DB_URL" \
+        | gcloud secrets create pg-database-url --data-file=- --project "$PROJECT_ID"
+else
+    printf '%s' "$DB_URL" \
+        | gcloud secrets versions add pg-database-url --data-file=- --project "$PROJECT_ID" >/dev/null
+fi
 gcloud secrets add-iam-policy-binding gemini-api-key --project "$PROJECT_ID" \
     --member "serviceAccount:${SA_EMAIL}" --role roles/secretmanager.secretAccessor --quiet >/dev/null
 gcloud secrets add-iam-policy-binding jwt-secret-key --project "$PROJECT_ID" \
+    --member "serviceAccount:${SA_EMAIL}" --role roles/secretmanager.secretAccessor --quiet >/dev/null
+gcloud secrets add-iam-policy-binding pg-database-url --project "$PROJECT_ID" \
     --member "serviceAccount:${SA_EMAIL}" --role roles/secretmanager.secretAccessor --quiet >/dev/null
 
 step "Creating Cloud SQL PostgreSQL instance (idempotent, may take minutes)"
@@ -90,8 +103,8 @@ gcloud run deploy "$API_SVC" \
     --source . \
     --service-account "$SA_EMAIL" \
     --port 8080 \
-    --set-env-vars "ENVIRONMENT=production,DEBUG=false,LOG_JSON=true,FIREBASE_PROJECT_ID=${PROJECT_ID},FIRESTORE_CONVERSATIONS_ENABLED=true,GEMINI_API_KEY_SECRET=projects/${PROJECT_ID}/secrets/gemini-api-key/versions/latest,SECRET_MANAGER_ENABLED=true,SCANNER_EXECUTION_ENABLED=false,DATABASE_URL=postgresql+asyncpg://${SA_NAME}:${PG_PASSWORD}@/sentinelgpt?host=/cloudsql/${PROJECT_ID}:${REGION}:${PG_INSTANCE}" \
-    --set-secrets "JWT_SECRET_KEY=jwt-secret-key:latest" \
+    --set-env-vars "ENVIRONMENT=production,DEBUG=false,LOG_JSON=true,FIREBASE_PROJECT_ID=${PROJECT_ID},FIRESTORE_CONVERSATIONS_ENABLED=true,GEMINI_API_KEY_SECRET=projects/${PROJECT_ID}/secrets/gemini-api-key/versions/latest,SECRET_MANAGER_ENABLED=true,SCANNER_EXECUTION_ENABLED=false" \
+    --set-secrets "JWT_SECRET_KEY=jwt-secret-key:latest,DATABASE_URL=pg-database-url:latest" \
     --allow-unauthenticated \
     --cpu 1 --memory 512Mi --concurrency 40 \
     --verbosity info
@@ -118,10 +131,10 @@ fi
 step "Applying database migrations (one-off job)"
 gcloud run jobs deploy sentinelgpt-migrate \
     --project "$PROJECT_ID" --region "$REGION" \
-    --image "REGION-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/${API_SVC}:latest" \
+    --image "${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/${API_SVC}:latest" \
     --set-cloudsql-instances "${PROJECT_ID}:${REGION}:${PG_INSTANCE}" \
-    --set-secrets "JWT_SECRET_KEY=jwt-secret-key:latest" \
-    --set-env-vars "ENVIRONMENT=production,DATABASE_URL=postgresql+asyncpg://${SA_NAME}:${PG_PASSWORD}@/sentinelgpt?host=/cloudsql/${PROJECT_ID}:${REGION}:${PG_INSTANCE}" \
+    --set-secrets "JWT_SECRET_KEY=jwt-secret-key:latest,DATABASE_URL=pg-database-url:latest" \
+    --set-env-vars "ENVIRONMENT=production" \
     --command alembic --args "upgrade,head" \
     --max-retries 1 2>/dev/null || \
     echo "  (create the migrate job later: gcloud run jobs deploy sentinelgpt-migrate ... --command alembic --args upgrade,head)"

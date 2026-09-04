@@ -59,6 +59,11 @@ spec:
             - name: LOG_JSON
               value: "true"
             # PostgreSQL (Cloud SQL via unix socket; asyncpg socket URL).
+            # Production injects this whole URL from Secret Manager
+            # (--set-secrets DATABASE_URL=pg-database-url:latest, see
+            # scripts/deploy-cloudrun.sh) so the password never lands in the
+            # revision's plaintext env. The literal below is a shape-only
+            # placeholder for review/GitOps.
             - name: DATABASE_URL
               value: "postgresql+asyncpg://API_USER:API_PASSWORD@/sentinelgpt?host=/cloudsql/PROJECT:REGION:sentinelgpt-pg"
             - name: SCANNER_EXECUTION_ENABLED
