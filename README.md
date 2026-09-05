@@ -134,7 +134,7 @@ container reporting `healthy` against its Celery broker) follow
 cp .env.example .env
 ./scripts/build-scanner-sandbox-image.sh       # Linux/macOS; on Windows use scripts\build-scanner-sandbox-image.ps1
 docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.local.yml up -d --build
-docker compose exec api alembic upgrade head
+docker compose exec api python -m alembic upgrade head   # no `alembic` binary in the image (pip --target); use the module
 .venv/Scripts/python.exe scripts/e2e_scan_workflow.py   # or the docker exec equivalent
 ```
 

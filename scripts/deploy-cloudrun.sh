@@ -129,15 +129,19 @@ else
 fi
 
 step "Applying database migrations (one-off job)"
+# NOTE: the API image installs dependencies with `pip --target`, which
+# ships no console scripts — there is no `alembic` binary on PATH. The
+# module invocation below is the supported in-image equivalent (verified:
+# `docker compose exec api python -m alembic current` reports the head).
 gcloud run jobs deploy sentinelgpt-migrate \
     --project "$PROJECT_ID" --region "$REGION" \
     --image "${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/${API_SVC}:latest" \
     --set-cloudsql-instances "${PROJECT_ID}:${REGION}:${PG_INSTANCE}" \
     --set-secrets "JWT_SECRET_KEY=jwt-secret-key:latest,DATABASE_URL=pg-database-url:latest" \
     --set-env-vars "ENVIRONMENT=production" \
-    --command alembic --args "upgrade,head" \
+    --command python --args "-m,alembic,upgrade,head" \
     --max-retries 1 2>/dev/null || \
-    echo "  (create the migrate job later: gcloud run jobs deploy sentinelgpt-migrate ... --command alembic --args upgrade,head)"
+    echo "  (create the migrate job later: gcloud run jobs deploy sentinelgpt-migrate ... --command python --args -m,alembic,upgrade,head)"
 gcloud run jobs execute sentinelgpt-migrate --region "$REGION" --project "$PROJECT_ID" --wait 2>/dev/null || true
 
 cat <<EOF

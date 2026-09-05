@@ -58,5 +58,7 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 # Console scripts of --target installs are not on PATH; invoke uvicorn as a
 # module so the locked dependency set is used exactly as installed. The
-# shell form lets ${PORT} expand at run time.
+# shell form lets ${PORT} expand at run time. Same rule applies to every
+# other console script: run migrations as `python -m alembic ...`, never
+# bare `alembic` (the Cloud Run migrate job and docs follow this).
 CMD ["sh", "-c", "python -m uvicorn src.main:app --host 0.0.0.0 --port \"${PORT:-8000}\""]

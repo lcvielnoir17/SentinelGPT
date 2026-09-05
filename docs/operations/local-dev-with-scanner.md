@@ -173,8 +173,13 @@ docker compose exec worker docker images sentinelgpt/scanner-sandbox --format '{
 ## 5. Apply database migrations
 
 ```bash
-docker compose exec api alembic upgrade head
+docker compose exec api python -m alembic upgrade head
 ```
+
+(The API image has no `alembic` console script — dependencies install via
+`pip --target`, so invoke the module. Host-side
+`.venv/Scripts/alembic.exe upgrade head` with `DATABASE_URL` pointed at
+localhost works identically.)
 
 (If the API image was built with the auto-loaded dev override, hot-reload
 keeps the API process running across the migration.)
