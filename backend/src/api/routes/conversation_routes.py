@@ -147,6 +147,12 @@ ServiceDep = Annotated[ConversationService, Depends(_service)]
     response_model=ConversationResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a conversation (optionally anchored to a scan/finding)",
+    description=(
+        "Conversations are Firestore-scoped by the verified Firebase UID: "
+        "accounts that never used the Firebase bridge receive 503 "
+        "AI_UNAVAILABLE here (email/password sessions keep full access to "
+        "the scanner platform itself)."
+    ),
 )
 async def create_conversation(
     payload: CreateConversationRequest | None, user: CurrentUser, service: ServiceDep

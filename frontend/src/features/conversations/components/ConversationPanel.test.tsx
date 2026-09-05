@@ -17,6 +17,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationPanel } from "./ConversationPanel";
+import { ApiError } from "../../../services/apiClient";
 import {
   createConversation,
   getConversation,
@@ -142,5 +143,29 @@ describe("ConversationPanel conversation resolution", () => {
     expect(mocked.send).toHaveBeenCalledWith("conv-single", "question one");
     // The blocked resolution window produced exactly one creation.
     await waitFor(() => expect(mocked.create).toHaveBeenCalledTimes(1));
+  });
+
+  it("explains analyst unavailability with sign-in guidance", async () => {
+    mocked.list.mockResolvedValue([]);
+    mocked.create.mockResolvedValue(conversation({ id: "conv-new" }));
+    mocked.get.mockResolvedValue(detail(conversation({ id: "conv-new" }), []));
+    mocked.send.mockRejectedValue(
+      new ApiError(
+        503,
+        "AI_UNAVAILABLE",
+        "The AI analyst is unavailable right now; try again shortly.",
+        "req-1",
+      ),
+    );
+
+    render(<ConversationPanel scanId={SCAN_ID} findingId={FINDING_ID} />);
+
+    await userEvent.type(screen.getByRole("textbox"), "is this exploitable?");
+    await userEvent.click(await screen.findByRole("button", { name: "Send" }));
+
+    // Email sessions can never use the analyst: the message must say so
+    // instead of implying a retry will help.
+    await screen.findByText(/requires Google sign-in/i);
+    expect(mocked.send).toHaveBeenCalledTimes(1);
   });
 });

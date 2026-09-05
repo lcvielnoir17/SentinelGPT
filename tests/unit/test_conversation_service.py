@@ -250,6 +250,26 @@ async def test_no_agent_configured_rejects_send() -> None:
         await service.send_message(owner, conversation.id, "hello")
 
 
+async def test_create_without_firebase_link_is_unavailable() -> None:
+    """Email/password accounts have no Firestore scope: 503, never 500."""
+    import uuid as _uuid
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    from src.domain.conversations.errors import ConversationAiUnavailableError
+    from src.domain.users.user_service import UserAccount
+
+    service = _service()
+    email_only = UserAccount(
+        id=_uuid.uuid4(),
+        email="email-only@example.com",
+        created_at=_dt.now(_UTC),
+        firebase_uid=None,
+    )
+    with pytest.raises(ConversationAiUnavailableError):
+        await service.create_conversation(email_only, title="t")
+
+
 async def test_history_window_is_bounded() -> None:
     agent = ScriptedAgent(replies=[f"reply {i}" for i in range(10)])
     service = ConversationService(

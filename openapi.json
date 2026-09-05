@@ -1718,6 +1718,7 @@
           "Conversations"
         ],
         "summary": "Create a conversation (optionally anchored to a scan/finding)",
+        "description": "Conversations are Firestore-scoped by the verified Firebase UID: accounts that never used the Firebase bridge receive 503 AI_UNAVAILABLE here (email/password sessions keep full access to the scanner platform itself).",
         "operationId": "create_conversation_api_v1_conversations_post",
         "requestBody": {
           "required": true,

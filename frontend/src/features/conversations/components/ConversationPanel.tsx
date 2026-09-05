@@ -116,7 +116,10 @@ export function ConversationPanel({
         setError(
           err.code === "AI_NOT_CONFIGURED"
             ? "AI analysis is not configured on this deployment."
-            : err.message,
+            : err.code === "AI_UNAVAILABLE"
+              ? "The AI analyst is unavailable. The analyst requires Google sign-in " +
+                "(email sessions cannot use it); otherwise, try again shortly."
+              : err.message,
         );
       } else {
         setError("The AI analyst is unreachable; try again.");
