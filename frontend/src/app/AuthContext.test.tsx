@@ -51,7 +51,7 @@ const mockedListTargets = vi.mocked(listTargets);
 const mockedListAttestations = vi.mocked(listAttestations);
 
 function account(id: string) {
-  return { id, email: `${id}@example.com`, mfaEnabled: false, organizations: [] };
+  return { id, email: `${id}@example.com`, mfaEnabled: false };
 }
 
 function Probe() {

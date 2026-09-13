@@ -50,6 +50,10 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_API_KEY_SECRET=${GEMINI_API_KEY_SECRET:-}
       - SECRET_MANAGER_ENABLED=${SECRET_MANAGER_ENABLED:-true}
+      # The worker enforces the execution gate at task entry as well as the
+      # API at enqueue time: both tiers must agree, otherwise the worker
+      # REJECTs instead of executing (kill-switch semantics).
+      - SCANNER_EXECUTION_ENABLED=true
       - SCANNER_SANDBOX_IMAGE=${SCANNER_SANDBOX_IMAGE:-sentinelgpt/scanner-sandbox:latest}
       - DOCKER_HOST=unix:///var/run/docker.sock
     healthcheck:

@@ -46,6 +46,7 @@ from src.domain.scanning.http_contract import (
     HttpResponseData,
     HttpScanRequest,
     ScanCancellation,
+    TlsConnectionInfo,
     TransportFailureKind,
 )
 from src.domain.scanning.redirects import RedirectValidationService
@@ -241,6 +242,32 @@ class SandboxHttpClient:
         return _parse_exec_result(result, final_target=request.target)
 
 
+def _parse_tls(raw: object) -> TlsConnectionInfo | None:
+    """Best-effort decode of the workload's descriptive TLS block.
+
+    Shape violations degrade to None (the engine treats absence as
+    unknown) rather than raising: telemetry must never fail the scan.
+    """
+    if not isinstance(raw, dict):
+        return None
+    version = raw.get("version")
+    cipher = raw.get("cipher")
+    bits = raw.get("cipher_bits")
+    certificate = raw.get("certificate")
+    if version is not None and not isinstance(version, str):
+        return None
+    if cipher is not None and not isinstance(cipher, str):
+        return None
+    if bits is not None and not isinstance(bits, int):
+        return None
+    if certificate is not None and not isinstance(certificate, dict):
+        return None
+    try:
+        return TlsConnectionInfo.from_dict(raw)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def _parse_exec_result(result: ExecResult, *, final_target: ConnectionTarget) -> HttpResponseData:
     for line in result.stdout.splitlines():
         if line.startswith(_SUCCESS_PREFIX):
@@ -252,11 +279,14 @@ def _parse_exec_result(result: ExecResult, *, final_target: ConnectionTarget) ->
                 elapsed_ms=float(payload["elapsed_ms"]),
                 final_target=final_target,
                 truncated=bool(payload.get("truncated", False)),
+                tls=_parse_tls(payload.get("tls")),
             )
         if line.startswith(_ERROR_PREFIX):
             payload = json.loads(line[len(_ERROR_PREFIX) :])
             kind = _KIND_MAP.get(str(payload.get("kind")), TransportFailureKind.PROTOCOL_ERROR)
-            raise ControlledTransportError(kind, str(payload.get("detail", "")))
+            raise ControlledTransportError(
+                kind, str(payload.get("detail", "")), tls=_parse_tls(payload.get("tls"))
+            )
     detail = (result.stderr or f"exit={result.exit_code}").strip()[:200]
     detail = detail.replace("\n", " ")
     raise ControlledTransportError(TransportFailureKind.PROTOCOL_ERROR, detail)

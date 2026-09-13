@@ -102,6 +102,12 @@ class FirestoreConversationStore:
             "firebaseUid": conversation.firebase_uid,
             "scanId": str(conversation.scan_id) if conversation.scan_id else None,
             "findingId": conversation.finding_id,
+            "compareScanAId": str(conversation.compare_scan_a_id)
+            if conversation.compare_scan_a_id
+            else None,
+            "compareScanBId": str(conversation.compare_scan_b_id)
+            if conversation.compare_scan_b_id
+            else None,
             "messageCount": conversation.message_count,
             "createdAt": conversation.created_at,
             "updatedAt": conversation.updated_at,
@@ -111,6 +117,8 @@ class FirestoreConversationStore:
     def _from_firestore(conversation_id: str, data: dict[str, Any]) -> Conversation:
         try:
             scan_id = data.get("scanId")
+            compare_a = data.get("compareScanAId")
+            compare_b = data.get("compareScanBId")
             return Conversation(
                 id=conversation_id,
                 user_id=uuid.UUID(data["userId"]),
@@ -118,6 +126,8 @@ class FirestoreConversationStore:
                 title=data["title"],
                 scan_id=uuid.UUID(scan_id) if scan_id else None,
                 finding_id=data.get("findingId"),
+                compare_scan_a_id=uuid.UUID(compare_a) if compare_a else None,
+                compare_scan_b_id=uuid.UUID(compare_b) if compare_b else None,
                 message_count=int(data.get("messageCount", 0)),
                 created_at=_as_datetime(data.get("createdAt")),
                 updated_at=_as_datetime(data.get("updatedAt")),
@@ -207,7 +217,7 @@ class FirestoreConversationStore:
 
     async def append_message(
         self, firebase_uid: str, conversation_id: str, message: ConversationMessage
-    ) -> None:
+    ) -> ConversationMessage:
         conversation_ref = self._conversation_ref(self._client, firebase_uid, conversation_id)
         snapshot = await conversation_ref.get()
         if not snapshot.exists:
@@ -226,6 +236,13 @@ class FirestoreConversationStore:
             },
         )
         await batch.commit()
+        return ConversationMessage(
+            id=message.id,
+            role=message.role,
+            content=message.content,
+            created_at=message.created_at,
+            sequence=next_seq,
+        )
 
     async def list_messages(
         self, firebase_uid: str, conversation_id: str, *, limit: int = 200

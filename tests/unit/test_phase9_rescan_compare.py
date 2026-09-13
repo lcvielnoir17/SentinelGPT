@@ -159,17 +159,34 @@ async def test_compare_returns_four_lifecycle_buckets(env, mocker) -> None:  # t
     fp_regressed = "fp_regressed_ddd"
 
     # Wire fingerprint index by intercepting the helper.
-    async def fake_index(_self: object, sid: uuid.UUID) -> dict[str, tuple[uuid.UUID, str]]:
+    async def fake_index(
+        _self: object, sid: uuid.UUID
+    ) -> dict[str, tuple[uuid.UUID, str, str, str]]:
         if sid == scan_a.id:
             return {
-                fp_persistent: (uuid.uuid4(), "Persistent Title"),
-                fp_resolved: (uuid.uuid4(), "Resolved Title"),
+                fp_persistent: (
+                    uuid.uuid4(),
+                    "Persistent Title",
+                    "MEDIUM",
+                    "MISSING_SECURITY_HEADER",
+                ),
+                fp_resolved: (uuid.uuid4(), "Resolved Title", "LOW", "MISSING_SECURITY_HEADER"),
             }
         if sid == scan_b.id:
             return {
-                fp_persistent: (uuid.uuid4(), "Persistent Title (new id)"),
-                fp_new: (uuid.uuid4(), "New Title"),
-                fp_regressed: (uuid.uuid4(), "Regressed Title"),
+                fp_persistent: (
+                    uuid.uuid4(),
+                    "Persistent Title (new id)",
+                    "HIGH",
+                    "MISSING_SECURITY_HEADER",
+                ),
+                fp_new: (uuid.uuid4(), "New Title", "HIGH", "MISSING_SECURITY_HEADER"),
+                fp_regressed: (
+                    uuid.uuid4(),
+                    "Regressed Title",
+                    "MEDIUM",
+                    "MISSING_SECURITY_HEADER",
+                ),
             }
         return {}
 
@@ -200,6 +217,12 @@ async def test_compare_returns_four_lifecycle_buckets(env, mocker) -> None:  # t
     assert {i["fingerprint"] for i in result["persistent"]} == {fp_persistent}
     assert {i["fingerprint"] for i in result["resolved"]} == {fp_resolved}
     assert {i["fingerprint"] for i in result["regressed"]} == {fp_regressed}
+    # Severity rides along; the persistent item changed MEDIUM -> HIGH.
+    assert result["new"][0]["severity"] == "HIGH"
+    assert result["new"][0]["previous_severity"] is None
+    persistent = result["persistent"][0]
+    assert persistent["severity"] == "HIGH"
+    assert persistent["previous_severity"] == "MEDIUM"
 
 
 async def test_compare_different_target_is_invalid_state(env, mocker) -> None:  # type: ignore[no-untyped-def]
@@ -215,7 +238,6 @@ async def test_compare_different_target_is_invalid_state(env, mocker) -> None:  
             "hostname": "other.example",
             "normalized_url": "https://other.example/",
             "owner_user_id": env.owner.id,
-            "owner_organization_id": None,
             "is_archived": False,
             "created_at": datetime.now(UTC),
         },

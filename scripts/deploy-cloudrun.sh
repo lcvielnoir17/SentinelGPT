@@ -17,6 +17,15 @@
 # Usage:
 #   PROJECT_ID=my-project REGION=europe-west1 ./scripts/deploy-cloudrun.sh
 #
+# Required environment:
+#   PROJECT_ID, REGION, PG_PASSWORD, JWT_SECRET (32+ chars), GEMINI_API_KEY,
+#   FIREBASE_WEB_API_KEY  (Firebase console > Project settings > General >
+#     Web API Key; public web config, baked into the SPA at build time)
+# Optional:
+#   FIREBASE_WEB_PROJECT_ID (defaults to PROJECT_ID),
+#   FIREBASE_WEB_APP_ID     (defaults to empty; passed through as-is),
+#   SA_NAME, SA_EMAIL, PG_INSTANCE.
+#
 # The scanner Celery worker is intentionally NOT deployed here (no
 # privileged Docker access on Cloud Run); the API runs with
 # SCANNER_EXECUTION_ENABLED=false. See docs/ideathon/cloud-run.md.
@@ -31,6 +40,18 @@ SA_EMAIL="${SA_EMAIL:-${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com}"
 PG_INSTANCE="${PG_INSTANCE:-sentinelgpt-pg}"
 PG_PASSWORD="${PG_PASSWORD:?PG_PASSWORD is required (Cloud SQL API user password)}"
 JWT_SECRET="${JWT_SECRET:?JWT_SECRET is required (32+ chars)}"
+
+# Public Firebase web configuration for the SPA (Project settings >
+# General > Your apps > SDK setup). These are NOT secrets — the web API key
+# only identifies the project; authorization stays server-side (ADR-0010).
+# Vite bakes VITE_* into the bundle at BUILD time, so they must be supplied
+# here (runtime --set-env-vars cannot reach them). Without them the frontend
+# builds in degraded mode (email/password only) and the Finding Analyst
+# conversation stays unavailable (POST /conversations answers 503
+# AI_UNAVAILABLE for sessions without a Firebase UID).
+FIREBASE_WEB_API_KEY="${FIREBASE_WEB_API_KEY:?FIREBASE_WEB_API_KEY is required (Firebase console > Project settings > General > Web API Key)}"
+FIREBASE_WEB_PROJECT_ID="${FIREBASE_WEB_PROJECT_ID:-$PROJECT_ID}"
+FIREBASE_WEB_APP_ID="${FIREBASE_WEB_APP_ID:-}"
 
 API_SVC="sentinelgpt-api"
 FRONTEND_SVC="sentinelgpt-frontend"
@@ -111,10 +132,21 @@ gcloud run deploy "$API_SVC" \
 
 API_URL="$(gcloud run services describe "$API_SVC" --project "$PROJECT_ID" --region "$REGION" --format 'value(status.url)')"
 
-step "Building + deploying the frontend (same-origin /api proxy)"
+step "Building the frontend image (Cloud Build, Firebase config baked in)"
+# NOTE: `gcloud run deploy --source` cannot forward Docker build args, and
+# Vite reads VITE_* only during `npm run build`. The frontend image is
+# therefore built via frontend/cloudbuild.yaml (substitutions become Docker
+# --build-arg values) and then deployed with --image. Each deploy creates a
+# NEW Cloud Run revision; the previous revision is kept for rollback.
+gcloud builds submit frontend \
+    --config frontend/cloudbuild.yaml \
+    --substitutions "_REGION=${REGION},_IMAGE=${FRONTEND_SVC},_VITE_FIREBASE_API_KEY=${FIREBASE_WEB_API_KEY},_VITE_FIREBASE_PROJECT_ID=${FIREBASE_WEB_PROJECT_ID},_VITE_FIREBASE_APP_ID=${FIREBASE_WEB_APP_ID}" \
+    --project "$PROJECT_ID"
+
+step "Deploying the frontend (same-origin /api proxy)"
 gcloud run deploy "$FRONTEND_SVC" \
     --project "$PROJECT_ID" --region "$REGION" \
-    --source frontend \
+    --image "${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/${FRONTEND_SVC}:latest" \
     --set-env-vars "API_UPSTREAM=${API_URL}" \
     --allow-unauthenticated \
     --cpu 0.5 --memory 256Mi
@@ -151,8 +183,9 @@ Deployment complete.
   Frontend: ${FRONTEND_URL}
 
 Next steps:
-  1. Add the Firebase Web SDK config to the frontend (VITE_FIREBASE_* build
-     args) and rebuild/deploy the frontend.
+  1. Verify the deployed SPA shows "Continue with Google" on /login and
+     that a Google sign-in yields a conversation-capable session
+     (GET /api/v1/conversations -> 200, POST /api/v1/conversations -> 201).
   2. Add ${FRONTEND_URL} to the API's CORS_ORIGINS only if you bypass the
      same-origin proxy.
   3. Run the demo script in docs/ideathon/demo.md.

@@ -1,0 +1,52 @@
+{
+  "schema_version": "sgpt.enrichment-dataset.v1",
+  "source": "sentinelgpt-curated",
+  "dataset_version": "2026.09.0",
+  "comment": "Development seed only: weakness-level advisories for the HTTP findings the scanner produces. No CVE applies to these generic misconfigurations, so cve_id/cvss stay null. Mappings follow long-standing scanner-community practice (ZAP rule taxonomy) and OWASP guidance; nothing here is invented scan data.",
+  "entries": [
+    {
+      "category_code": "MISSING_SECURITY_HEADER",
+      "identifier": "strict-transport-security",
+      "cwe_id": "CWE-319",
+      "references": [
+        "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html",
+        "https://cwe.mitre.org/data/definitions/319.html"
+      ],
+      "affected_technology": "HTTP servers without HSTS",
+      "remediation": "Serve a Strict-Transport-Security header with a long max-age and includeSubDomains, after verifying full HTTPS coverage."
+    },
+    {
+      "category_code": "MISSING_SECURITY_HEADER",
+      "identifier": "content-security-policy",
+      "cwe_id": "CWE-693",
+      "references": [
+        "https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html",
+        "https://cwe.mitre.org/data/definitions/693.html"
+      ],
+      "affected_technology": "Web applications rendering untrusted content",
+      "remediation": "Deploy a Content-Security-Policy starting in report-only mode, then enforce a least-privilege policy."
+    },
+    {
+      "category_code": "MISSING_SECURITY_HEADER",
+      "identifier": "x-frame-options",
+      "cwe_id": "CWE-1021",
+      "references": [
+        "https://cheatsheetseries.owasp.org/cheatsheets/Clickjacking_Defense_Cheat_Sheet.html",
+        "https://cwe.mitre.org/data/definitions/1021.html"
+      ],
+      "affected_technology": "Web applications rendered in browsers",
+      "remediation": "Send X-Frame-Options: DENY (or SAMEORIGIN where framing is required) or an equivalent frame-ancestors CSP directive."
+    },
+    {
+      "category_code": "MISSING_SECURITY_HEADER",
+      "identifier": "cookie_missing_secure",
+      "cwe_id": "CWE-614",
+      "references": [
+        "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html",
+        "https://cwe.mitre.org/data/definitions/614.html"
+      ],
+      "affected_technology": "Web applications using cookies over HTTPS",
+      "remediation": "Mark sensitive cookies Secure (and HttpOnly unless JavaScript access is required)."
+    }
+  ]
+}

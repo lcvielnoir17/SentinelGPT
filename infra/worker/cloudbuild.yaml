@@ -1,0 +1,42 @@
+# =============================================================================
+# SentinelGPT worker image — Cloud Build configuration.
+#
+# Builds infra/docker/worker.Dockerfile (API image + docker CLI) and pushes
+# to Artifact Registry for the production worker VM to pull.
+#
+# Invoked by scripts/provision-worker-vm.sh:
+#   gcloud builds submit . --config infra/worker/cloudbuild.yaml \
+#       --substitutions _REGION=...,_IMAGE=sentinelgpt-worker,\
+#           _BASE_IMAGE=${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/sentinelgpt-api:latest \
+#       --project "$PROJECT_ID"
+#
+# NOTE: the submitted SOURCE is the repo root, so Dockerfile/context paths
+# below are repo-root-relative. The repo-root .env never uploads thanks to
+# .gcloudignore. No secrets pass through substitutions — the image carries
+# no credentials; the VM injects them at container start from Secret
+# Manager values rendered into a root-only .env.worker file.
+# =============================================================================
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - '--build-arg'
+      - 'BASE_IMAGE=${_BASE_IMAGE}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/${_IMAGE}:latest'
+      - -f
+      - infra/docker/worker.Dockerfile
+      - .
+    id: build-worker
+
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/${_IMAGE}:latest'
+
+substitutions:
+  _REGION: europe-west1
+  _IMAGE: sentinelgpt-worker
+  _BASE_IMAGE: sentinelgpt-api
+
+options:
+  logging: CLOUD_LOGGING_ONLY

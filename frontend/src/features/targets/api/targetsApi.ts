@@ -12,8 +12,7 @@ export interface Target {
   id: string;
   hostname: string;
   url: string;
-  ownerOrganizationId: string | null;
-  ownerUserId: string | null;
+  ownerUserId: string;
   isArchived: boolean;
   createdAt: string;
   status: string;

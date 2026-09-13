@@ -168,4 +168,124 @@ describe("ConversationPanel conversation resolution", () => {
     await screen.findByText(/requires Google sign-in/i);
     expect(mocked.send).toHaveBeenCalledTimes(1);
   });
+
+  it("surfaces a mount-time identity gate without any typing", async () => {
+    mocked.list.mockResolvedValue([]);
+    mocked.create.mockRejectedValue(
+      new ApiError(503, "AI_UNAVAILABLE", "Conversations require Firebase-linked sign-in.", "req-gate"),
+    );
+
+    render(<ConversationPanel scanId={SCAN_ID} findingId={FINDING_ID} />);
+
+    // The failure is visible on mount — never a silent dead panel — and the
+    // init indicator clears to a terminal state.
+    await screen.findByText(/requires Google sign-in/i);
+    await waitFor(() => expect(screen.queryByText(/starting conversation/i)).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /start conversation/i })).toBeInTheDocument();
+  });
+
+  it("surfaces a mount-time network failure and preserves retry", async () => {
+    mocked.list.mockRejectedValue(
+      new ApiError(0, "NETWORK_ERROR", "Unable to reach the SentinelGPT API; check your connection and try again.", null),
+    );
+
+    render(<ConversationPanel scanId={SCAN_ID} findingId={FINDING_ID} />);
+
+    await screen.findByText(/unreachable/i);
+    await waitFor(() => expect(screen.queryByText(/starting conversation/i)).not.toBeInTheDocument());
+
+    // Retry path: a later submit re-runs resolution and can succeed.
+    mocked.list.mockResolvedValue([]);
+    mocked.create.mockResolvedValue(conversation({ id: "conv-retry" }));
+    mocked.get.mockResolvedValue(detail(conversation({ id: "conv-retry" }), []));
+    mocked.send.mockResolvedValue({
+      userMessage: { id: "u9", role: "user", content: "retry question", sequence: 1, createdAt: "2026-09-03T12:00:00Z" },
+      assistantMessage: { id: "a9", role: "assistant", content: "recovered answer", sequence: 2, createdAt: "2026-09-03T12:00:01Z" },
+    });
+    await userEvent.type(screen.getByRole("textbox"), "retry question");
+    await userEvent.click(screen.getByRole("button", { name: /start conversation/i }));
+    expect(await screen.findByText("recovered answer")).toBeInTheDocument();
+  });
+
+  it("clears sending state on timeout and keeps the draft for retry", async () => {
+    mocked.list.mockResolvedValue([conversation()]);
+    mocked.get.mockResolvedValue(detail(conversation(), []));
+    mocked.send.mockRejectedValue(
+      new ApiError(0, "TIMEOUT", "The request timed out; try again.", null),
+    );
+
+    render(<ConversationPanel scanId={SCAN_ID} findingId={FINDING_ID} />);
+    await userEvent.type(screen.getByRole("textbox"), "slow question?");
+    await userEvent.click(await screen.findByRole("button", { name: "Send" }));
+
+    await screen.findByText(/took too long/i);
+    // Terminal state: no "Thinking…" left, draft restored, button usable.
+    expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toHaveValue("slow question?");
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  });
+
+  it("ignores a double submit: exactly one message request", async () => {
+    mocked.list.mockResolvedValue([conversation()]);
+    mocked.get.mockResolvedValue(detail(conversation(), []));
+    let releaseSend!: (value: {
+      userMessage: ConversationDetailDto["messages"][number];
+      assistantMessage: ConversationDetailDto["messages"][number];
+    }) => void;
+    mocked.send.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseSend = resolve;
+        }),
+    );
+
+    render(<ConversationPanel scanId={SCAN_ID} findingId={FINDING_ID} />);
+    await userEvent.type(screen.getByRole("textbox"), "double click?");
+    const button = await screen.findByRole("button", { name: "Send" });
+    await userEvent.dblClick(button);
+    expect(mocked.send).toHaveBeenCalledTimes(1);
+
+    releaseSend({
+      userMessage: { id: "u2", role: "user", content: "double click?", sequence: 1, createdAt: "2026-09-03T12:00:00Z" },
+      assistantMessage: { id: "a2", role: "assistant", content: "single reply", sequence: 2, createdAt: "2026-09-03T12:00:01Z" },
+    });
+    expect(await screen.findByText("single reply")).toBeInTheDocument();
+  });
+
+  it("recovers after a failed send: retry delivers the reply", async () => {
+    mocked.list.mockResolvedValue([conversation()]);
+    mocked.get.mockResolvedValue(detail(conversation(), []));
+    mocked.send
+      .mockRejectedValueOnce(new ApiError(503, "AI_UNAVAILABLE", "down", "req-x"))
+      .mockResolvedValueOnce({
+        userMessage: { id: "u3", role: "user", content: "again?", sequence: 1, createdAt: "2026-09-03T12:00:00Z" },
+        assistantMessage: { id: "a3", role: "assistant", content: "second try works", sequence: 2, createdAt: "2026-09-03T12:00:01Z" },
+      });
+
+    render(<ConversationPanel scanId={SCAN_ID} findingId={FINDING_ID} />);
+    await userEvent.type(screen.getByRole("textbox"), "again?");
+    await userEvent.click(await screen.findByRole("button", { name: "Send" }));
+    await screen.findByText(/requires Google sign-in/i);
+
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("second try works")).toBeInTheDocument();
+    expect(mocked.send).toHaveBeenCalledTimes(2);
+  });
+
+  it("unmounts cleanly while initialization is in flight", async () => {
+    let releaseList!: (value: ConversationDto[]) => void;
+    mocked.list.mockImplementation(
+      () => new Promise<ConversationDto[]>((resolve) => (releaseList = resolve)),
+    );
+    mocked.create.mockResolvedValue(conversation({ id: "conv-late" }));
+    mocked.get.mockResolvedValue(detail(conversation({ id: "conv-late" }), []));
+
+    const { unmount } = render(<ConversationPanel scanId={SCAN_ID} findingId={FINDING_ID} />);
+    expect(screen.getByText(/starting conversation/i)).toBeInTheDocument();
+    unmount();
+    // Late settlement after close must not throw or update dead state.
+    releaseList([]);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mocked.create).toHaveBeenCalledTimes(1);
+  });
 });

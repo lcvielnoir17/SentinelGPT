@@ -40,6 +40,9 @@ class UserAccount:
     # Present only for federated logins (ADR-0010); the canonical identity
     # remains ``id`` — Firestore paths and authorization always key on it.
     firebase_uid: str | None = None
+    # MFA enrollment state (M11). Defaults False so older construction
+    # sites stay valid; session issuance reads the live row instead.
+    mfa_enabled: bool = False
 
 
 class UserService:
@@ -186,6 +189,7 @@ class UserService:
             email=user.email,
             created_at=user.created_at,
             firebase_uid=user.firebase_uid,
+            mfa_enabled=bool(getattr(user, "mfa_enabled", False)),
         )
 
     async def get_account(

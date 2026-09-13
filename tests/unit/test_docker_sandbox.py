@@ -370,3 +370,46 @@ def test_context_manager_destroys_on_success_and_on_failure() -> None:
     with pytest.raises(SandboxSetupFailedError), broken:
         pass  # establish() raises on __enter__
     assert not broken.established
+
+
+def _run_argv(script: ScriptedDocker) -> list[str]:
+    for call in script.calls:
+        if tuple(call[1:3]) == ("run", "-d"):
+            return call
+    raise AssertionError("container was never created")
+
+
+def test_sandbox_container_carries_resource_caps_by_default() -> None:
+    """Least privilege covers host resources: the sandbox container is
+    created with memory and CPU caps so a pathological workload cannot
+    exhaust the worker host."""
+    script = ScriptedDocker()
+    _script_happy_path(script)
+    sandbox = _sandbox(script)
+    sandbox.establish()
+
+    argv = _run_argv(script)
+    assert "--memory" in argv and argv[argv.index("--memory") + 1] == "512m"
+    assert "--cpus" in argv and argv[argv.index("--cpus") + 1] == "1.0"
+    sandbox.destroy()
+
+
+def test_sandbox_resource_caps_can_be_disabled() -> None:
+    """Explicit None opts out of a cap (tests/specialized hosts); the flags
+    are then absent rather than empty."""
+    script = ScriptedDocker()
+    _script_happy_path(script)
+    binding = ValidatedTargetBinding.create(
+        hostname="target.example",
+        addresses=(TARGET,),
+        validate=lambda _a: None,
+    )
+    policy = SandboxEgressPolicy.for_binding(binding)
+    config = DockerSandboxConfig(check_docker_binary=False, memory=None, cpus=None)
+    sandbox = DockerEgressSandbox(policy, config=config, command_runner=script)
+    sandbox.establish()
+
+    argv = _run_argv(script)
+    assert "--memory" not in argv
+    assert "--cpus" not in argv
+    sandbox.destroy()

@@ -344,7 +344,7 @@ def test_scan_requested_event_remains_visible_to_initiator(
     assert response.json()["id"] == str(requested.id)
 
 
-def test_organization_isolation_preserved_for_lifecycle_events(
+def test_cross_owner_isolation_preserved_for_lifecycle_events(
     client_with_audit_store: tuple[TestClient, Any],
 ) -> None:
     """A second user from a different tenant cannot see the lifecycle

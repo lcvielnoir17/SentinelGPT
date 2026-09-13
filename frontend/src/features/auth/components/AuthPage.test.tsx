@@ -54,7 +54,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mockedMe.mockRejectedValue(new Error("no session"));
   mockedLogin.mockResolvedValue({
-    user: { id: "u1", email: "a@example.com", mfaEnabled: false, organizations: [] },
+    user: { id: "u1", email: "a@example.com", mfaEnabled: false },
     expiresIn: 900,
   });
 });

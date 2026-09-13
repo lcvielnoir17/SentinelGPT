@@ -23,8 +23,10 @@ Browser ──▶ Cloud Run: sentinelgpt-frontend (nginx SPA)
                 └─── Gemini API (google-genai)   multi-turn security analyst
 
 Scanner worker (Celery + Docker sandbox): NOT on Cloud Run — it needs a
-Docker daemon; run it on a VM/compute with Docker. The Cloud Run API runs
-with SCANNER_EXECUTION_ENABLED=false, which is an explicit, tested mode.
+Docker daemon; it runs on a dedicated GCE VM (see
+[worker-tier.md](worker-tier.md)). The Cloud Run API runs with
+SCANNER_EXECUTION_ENABLED=false until the worker tier is provisioned and
+execution is explicitly enabled, which is an explicit, tested mode.
 ```
 
 Why two services: Cloud Run deploys one container per service. The nginx
@@ -43,8 +45,14 @@ gcloud config set project "$PROJECT_ID"
 
 PROJECT_ID=my-project REGION=europe-west1 \
 GEMINI_API_KEY=... JWT_SECRET=$(openssl rand -hex 32) PG_PASSWORD=... \
+FIREBASE_WEB_API_KEY=... \
     ./scripts/deploy-cloudrun.sh
 ```
+(`FIREBASE_WEB_API_KEY` is the public Web API Key from Firebase console >
+Project settings > General; `FIREBASE_WEB_PROJECT_ID` defaults to
+`PROJECT_ID` and `FIREBASE_WEB_APP_ID` defaults to empty. All three are
+baked into the SPA at build time via Docker build args — Cloud Run runtime
+env vars cannot reach Vite.)
 
 The script (idempotent):
 
@@ -62,7 +70,11 @@ The script (idempotent):
    `SECRET_MANAGER_ENABLED=true`, `SCANNER_EXECUTION_ENABLED=false`, the
    Cloud SQL unix-socket `DATABASE_URL`, and
    `--set-secrets JWT_SECRET_KEY=jwt-secret-key:latest`.
-6. Builds + deploys the frontend with `API_UPSTREAM=<api-url>`.
+6. Builds the frontend image via `frontend/cloudbuild.yaml` (Cloud
+   Build forwards the public Firebase web config as Docker build args so
+   Vite bakes it into the bundle) and deploys it with
+   `API_UPSTREAM=<api-url>`. Each deploy creates a new Cloud Run revision;
+   the previous revision is kept for rollback.
 7. Uploads the deny-all Firestore rules (Firebase CLI if present).
 8. Runs `alembic upgrade head` as a one-off Cloud Run job.
 

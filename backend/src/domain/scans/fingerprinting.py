@@ -85,6 +85,12 @@ _HEADER_TITLE_RE = re.compile(
 _NONSTANDARD_XCTO_RE = re.compile(r"Nonstandard\s+(X-Content-Type-Options)\s+value", re.IGNORECASE)
 _COOKIE_SECURE_RE = re.compile(r"Cookies?\s+without\s+the\s+(Secure)\s+attribute", re.I)
 _COOKIE_HTTPONLY_RE = re.compile(r"Cookies?\s+without\s+the\s+(HttpOnly)\s+attribute", re.I)
+_COOKIE_PREFIX_RE = re.compile(r"Cookie\s+prefix\s+violation", re.IGNORECASE)
+_CORS_CREDENTIALED_RE = re.compile(r"Credentialed\s+CORS\s+wildcard", re.IGNORECASE)
+_CORS_WILDCARD_RE = re.compile(r"Wildcard\s+CORS\s+origin", re.IGNORECASE)
+_CACHE_SENSITIVE_RE = re.compile(r"Cacheable\s+sensitive\s+response", re.IGNORECASE)
+_SERVER_VERSION_RE = re.compile(r"Server\s+version\s+disclosed:\s*(\S+)", re.IGNORECASE)
+_DEBUG_HEADER_RE = re.compile(r"Debug\s+header\s+exposed", re.IGNORECASE)
 _CVE_ID_RE = re.compile(r"(CVE-\d{4}-\d{4,})", re.IGNORECASE)
 
 
@@ -167,10 +173,59 @@ class UnsupportedFingerprintCategory(Exception):
         super().__init__(f"No fingerprint identifier rule defined for category {category_code!r}")
 
 
+def _extract_misconfiguration_identifier(title: str, location: str) -> str | None:
+    """Combined extractor for the canonical MISSING_SECURITY_HEADER code.
+
+    Persisted findings share one canonical category across headers and
+    cookies, but each family has its own identifier rule. Trying the
+    header rule first preserves every existing identifier; falling
+    through to the cookie rule extends stable identity to cookie
+    findings (previously fingerprintf-less). The server-info rule is
+    deliberately excluded: its catch-all fallback would assign identity
+    to unrelated titles instead of raising.
+    """
+    for extractor in (
+        _extract_security_header_identifier,
+        _extract_cookie_identifier,
+        _extract_hardening_identifier,
+    ):
+        identifier = extractor(title, location)
+        if identifier:
+            return identifier
+    return None
+
+
+def _extract_hardening_identifier(title: str, location: str) -> str | None:  # noqa: ARG001
+    """Stable identity for passive-hardening findings (one key per class).
+
+    Cookie prefix, CORS, cacheability, server-version, and debug-header
+    findings aggregate all affected names into one finding per class, so
+    the identifier is the class — never a cookie/header name that could
+    carry per-target random suffixes. Header VALUE findings (permissive
+    CSP, weak HSTS, permissive referrer policy) intentionally reuse the
+    header-name identifier: they are the same issue class as the missing
+    header, and severity transitions surface through comparison.
+    """
+    if _COOKIE_PREFIX_RE.search(title):
+        return "cookie_prefix_violation"
+    if _CORS_CREDENTIALED_RE.search(title):
+        return "cors_credentialed_wildcard"
+    if _CORS_WILDCARD_RE.search(title):
+        return "cors_wildcard_origin"
+    if _CACHE_SENSITIVE_RE.search(title):
+        return "cache_sensitive_response"
+    if _DEBUG_HEADER_RE.search(title):
+        return "debug_header_exposed"
+    m = _SERVER_VERSION_RE.search(title)
+    if m:
+        return f"server_version_{normalize_header_name(m.group(1))}"
+    return None
+
+
 _Extractor = Any  # Callable[[str, str], str | None] — Any keeps lambdas simple for mypy
 
 _IDENTIFIER_EXTRACTORS: dict[str, _Extractor] = {
-    "MISSING_SECURITY_HEADER": _extract_security_header_identifier,
+    "MISSING_SECURITY_HEADER": _extract_misconfiguration_identifier,
     "http.security-headers": _extract_security_header_identifier,
     "http.cookies": _extract_cookie_identifier,
     "http.transport": _extract_transport_identifier,

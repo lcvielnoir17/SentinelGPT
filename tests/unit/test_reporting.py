@@ -2,7 +2,7 @@
 
 The assembler is a pure read step over the database; the formatters
 are pure functions over the assembler's output. Together they implement
-the format-agnostic invariant: the JSON, CSV, and future PDF exports
+the format-agnostic invariant: the JSON, CSV, and PDF exports
 of the same scan can never drift into showing inconsistent data.
 """
 
@@ -253,3 +253,286 @@ def test_csv_neutralizes_formula_cells() -> None:
     )
     rows = list(csv_module.DictReader(io.StringIO(render_csv_report(hostile))))
     assert rows[0]["target_hostname"] == "'-2+3"
+
+
+def _pdf_text(pdf: bytes) -> str:
+    """Decompress page content streams so assertions read actual content.
+
+    Reportlab applies ASCII85 + Flate filters to page streams; metadata
+    stays plaintext. Streams are located via the byte offset of their
+    ``stream`` opener combined with the preceding /Length (binary payloads
+    can contain the words "stream"/"endstream", so delimiter scanning is
+    unreliable).
+    """
+    import re
+
+    parts: list[str] = []
+    for opener in re.finditer(rb"\nstream\n", pdf):
+        header = pdf[max(0, opener.start() - 120) : opener.start()]
+        length = re.search(rb"/Length (\d+)", header)
+        if length is None:
+            continue
+        blob = pdf[opener.end() : opener.end() + int(length.group(1))]
+        parts.append(_decode_stream(blob))
+    return "\n".join(parts)
+
+
+def _decode_stream(blob: bytes) -> str:
+    """Decode one content stream (raw Flate or Adobe ASCII85 + Flate)."""
+    import base64
+    import zlib
+
+    try:
+        return zlib.decompress(blob).decode("latin-1")
+    except Exception:  # noqa: BLE001 - fall through to the ASCII85 variant
+        pass
+    try:
+        return zlib.decompress(base64.a85decode(blob, adobe=True)).decode("latin-1")
+    except Exception:  # noqa: BLE001 - non-content streams are skipped
+        return ""
+
+
+def test_pdf_renders_canonical_content() -> None:
+    """The PDF carries branding, scan identity, and every finding."""
+    from src.reporting.pdf_generator import render_pdf_report
+
+    pdf = render_pdf_report(_sample_document())
+    assert pdf.startswith(b"%PDF")
+    assert len(pdf) > 2000
+    text = _pdf_text(pdf)
+    assert "SentinelGPT" in text
+    assert "Missing HSTS" in text
+    assert "example.test" in text
+    assert "HIGH" in text
+
+
+def test_pdf_empty_scan_renders_honestly() -> None:
+    """Zero findings produce a valid report stating so — never an error."""
+    from src.reporting.pdf_generator import render_pdf_report
+
+    base = _sample_document()
+    empty = ReportDocument(
+        schema_version=base.schema_version,
+        generated_at=base.generated_at,
+        scan=base.scan,
+        engines=(),
+        findings=(),
+        assessment=None,
+        severity_counts={},
+        lifecycle_counts={},
+    )
+    pdf = render_pdf_report(empty)
+    assert pdf.startswith(b"%PDF")
+    assert "No findings" in _pdf_text(pdf)
+
+
+def test_pdf_escapes_hostile_markup_and_truncates_huge_evidence() -> None:
+    """Attacker-controlled finding text cannot break PDF structure, and a
+    huge evidence blob is truncated with a marker instead of ballooning."""
+    from src.reporting.pdf_generator import render_pdf_report
+
+    base = _sample_document()
+    hostile_finding = ReportFinding(
+        id=base.findings[0].id,
+        severity="CRITICAL",
+        category="X",
+        title='<b>& "quoted"</b>',
+        description="desc",
+        evidence="E" * 10_000,
+        location="https://example.test/",
+        recommendation="fix",
+        fingerprint="fp",
+        affected_asset=None,
+        source_engine_code=None,
+        evidence_rows=(),
+        explanation=None,
+    )
+    hostile = ReportDocument(
+        schema_version=base.schema_version,
+        generated_at=base.generated_at,
+        scan=base.scan,
+        engines=(),
+        findings=(hostile_finding,),
+        assessment=None,
+        severity_counts={"CRITICAL": 1},
+        lifecycle_counts={},
+    )
+    pdf = render_pdf_report(hostile)
+    assert pdf.startswith(b"%PDF")
+    text = _pdf_text(pdf)
+    # The markup survived as literal text: reportlab fragments runs into
+    # separate Tj segments, so the tag characters appear as text runs
+    # ("(b)", "(>)") instead of being consumed as bold markup (which
+    # would emit neither). "quoted" must render, not vanish.
+    assert "quoted" in text
+    assert "(b)" in text and "(>)" in text
+    assert "truncated after 4000 characters" in text
+    assert len(pdf) < 200_000  # bounded despite 10k input
+
+
+def test_pdf_orders_findings_by_severity() -> None:
+    """Critical findings appear before low ones regardless of input order."""
+    from src.reporting.pdf_generator import render_pdf_report
+
+    base = _sample_document()
+    low = ReportFinding(
+        id=uuid.UUID("00000000-0000-0000-0000-000000000010"),
+        severity="LOW",
+        category="C",
+        title="Low finding",
+        description="d",
+        evidence="",
+        location="",
+        recommendation="r",
+        fingerprint=None,
+        affected_asset=None,
+        source_engine_code=None,
+    )
+    critical = ReportFinding(
+        id=uuid.UUID("00000000-0000-0000-0000-000000000011"),
+        severity="CRITICAL",
+        category="C",
+        title="Critical finding",
+        description="d",
+        evidence="",
+        location="",
+        recommendation="r",
+        fingerprint=None,
+        affected_asset=None,
+        source_engine_code=None,
+    )
+    doc = ReportDocument(
+        schema_version=base.schema_version,
+        generated_at=base.generated_at,
+        scan=base.scan,
+        engines=(),
+        findings=(low, critical),
+        assessment=None,
+        severity_counts={"LOW": 1, "CRITICAL": 1},
+        lifecycle_counts={},
+    )
+    text = _pdf_text(render_pdf_report(doc))
+    assert text.index("Critical finding") < text.index("Low finding")
+
+
+def test_csv_carries_per_finding_lifecycle_status() -> None:
+    """lifecycle_status comes from the assembled document, not a guess."""
+    import csv as csv_module
+    import io
+
+    base = _sample_document()
+    finding = ReportFinding(
+        id=base.findings[0].id,
+        severity=base.findings[0].severity,
+        category=base.findings[0].category,
+        title=base.findings[0].title,
+        description=base.findings[0].description,
+        evidence=base.findings[0].evidence,
+        location=base.findings[0].location,
+        recommendation=base.findings[0].recommendation,
+        fingerprint=base.findings[0].fingerprint,
+        affected_asset=base.findings[0].affected_asset,
+        source_engine_code=base.findings[0].source_engine_code,
+        evidence_rows=base.findings[0].evidence_rows,
+        explanation=base.findings[0].explanation,
+        lifecycle_status="PERSISTENT",
+    )
+    doc = ReportDocument(
+        schema_version=base.schema_version,
+        generated_at=base.generated_at,
+        scan=base.scan,
+        engines=base.engines,
+        findings=(finding,),
+        assessment=base.assessment,
+        severity_counts=base.severity_counts,
+        lifecycle_counts={"PERSISTENT": 1},
+    )
+    rows = list(csv_module.DictReader(io.StringIO(render_csv_report(doc))))
+    assert rows[0]["lifecycle_status"] == "PERSISTENT"
+    assert json.loads(render_json_report(doc))["findings"][0]["lifecycle_status"] == "PERSISTENT"
+
+
+def test_large_finding_set_renders_all_formats() -> None:
+    """300 findings: every format completes, rows are complete, PDF bounded."""
+    import csv as csv_module
+    import io
+
+    base = _sample_document()
+    severities = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")
+    findings = tuple(
+        ReportFinding(
+            id=uuid.UUID(int=i + 100),
+            severity=severities[i % len(severities)],
+            category="C",
+            title=f"Finding {i:03d} with special chars <>&\"' =HYPERLINK",
+            description="d",
+            evidence="e" * 500,
+            location="https://example.test/",
+            recommendation="r",
+            fingerprint=f"fp-{i}",
+            affected_asset=None,
+            source_engine_code=None,
+            evidence_rows=({"id": f"ev-{i}", "type": "t", "content": "c"},),
+            explanation=None,
+        )
+        for i in range(300)
+    )
+    doc = ReportDocument(
+        schema_version=base.schema_version,
+        generated_at=base.generated_at,
+        scan=base.scan,
+        engines=(),
+        findings=findings,
+        assessment=None,
+        severity_counts={},
+        lifecycle_counts={},
+    )
+    assert len(json.loads(render_json_report(doc))["findings"]) == 300
+    assert len(list(csv_module.DictReader(io.StringIO(render_csv_report(doc))))) == 300
+    from src.reporting.pdf_generator import render_pdf_report
+
+    pdf = render_pdf_report(doc)
+    assert pdf.startswith(b"%PDF")
+    text = _pdf_text(pdf)
+    assert "Finding 000" in text and "Finding 299" in text
+
+
+def test_failed_scan_report_uses_engine_status() -> None:
+    """A REJECTED scan still renders: engines carry the failure, findings
+    are empty, and the PDF states the outcome honestly."""
+    from src.reporting.pdf_generator import render_pdf_report
+
+    base = _sample_document()
+    doc = ReportDocument(
+        schema_version=base.schema_version,
+        generated_at=base.generated_at,
+        scan=ReportScanMetadata(
+            target_hostname=base.scan.target_hostname,
+            target_normalized_url=base.scan.target_normalized_url,
+            scan_id=base.scan.scan_id,
+            scan_profile=base.scan.scan_profile,
+            scan_status="REJECTED",
+            initiated_by_user_id=base.scan.initiated_by_user_id,
+            queued_at=base.scan.queued_at,
+            started_at=base.scan.started_at,
+            completed_at=base.scan.completed_at,
+        ),
+        engines=(
+            ReportEngineSummary(
+                engine_code="headers-analyzer",
+                tool_version_snapshot="1",
+                status="FAILED",
+                started_at=None,
+                completed_at=None,
+                error_message="sandbox unavailable",
+            ),
+        ),
+        findings=(),
+        assessment=None,
+        severity_counts={},
+        lifecycle_counts={},
+    )
+    assert json.loads(render_json_report(doc))["scan"]["status"] == "REJECTED"
+    pdf = render_pdf_report(doc)
+    assert pdf.startswith(b"%PDF")
+    assert "REJECTED" in _pdf_text(pdf)

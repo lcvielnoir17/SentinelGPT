@@ -299,3 +299,21 @@ def test_persistence_path_uses_canonical_db_category() -> None:
         category_code="MISSING_SECURITY_HEADER",
         identifier="content-security-policy",
     )
+
+
+def test_cookie_finding_gains_stable_identity_under_canonical_code() -> None:
+    """Cookie findings previously produced no fingerprint under the
+    canonical category; the combined extractor assigns the cookie rule's
+    identifier without disturbing header identifiers."""
+    from src.domain.scans.fingerprinting import extract_identifier
+
+    assert (
+        extract_identifier("MISSING_SECURITY_HEADER", "Cookie without the Secure attribute")
+        == "cookie_missing_secure"
+    )
+    assert (
+        extract_identifier(
+            "MISSING_SECURITY_HEADER", "Missing Content-Security-Policy security header"
+        )
+        == "content-security-policy"
+    )

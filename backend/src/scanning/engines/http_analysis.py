@@ -24,6 +24,7 @@ Hard rules enforced structurally:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -44,6 +45,7 @@ from src.domain.scanning.http_contract import (
     HttpRequestSpec,
     HttpScanRequest,
 )
+from src.scanning.engines.technology import Technology, detect_technologies
 
 if TYPE_CHECKING:
     from src.domain.scanning.egress import ScanNetworkContext
@@ -93,6 +95,9 @@ class HttpAnalysisResult:
     error_kind: str | None = None
     error_detail: str = ""
     engine_version: str = "1"
+    # Structured technology inventory (mirrors the technology.* observations
+    # above for DB persistence; observations remain the AI-readable form).
+    technologies: tuple[Technology, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         severity_counts: dict[str, int] = {}
@@ -162,7 +167,13 @@ class HttpSecurityAnalysisEngine:
         self._assess_transport(context, origin, response, observations)
         self._assess_headers(response, location, observations, findings)
         _assess_cookies(response, location, observations, findings)
+        _assess_cookie_prefixes(response, location, observations, findings)
+        _assess_cors(response, location, observations, findings)
+        _assess_cache(response, location, observations, findings)
+        _assess_header_values(response, location, observations, findings)
         _assess_server_info(response, observations)
+        _assess_server_detail(response, location, observations, findings)
+        technologies = _assess_technology(response, location, observations)
 
         content_type = _header(response.headers, "content-type") or ""
         return HttpAnalysisResult(
@@ -179,6 +190,7 @@ class HttpSecurityAnalysisEngine:
             response_bytes=len(response.body),
             observations=tuple(observations),
             findings=tuple(findings),
+            technologies=technologies,
         )
 
     # ------------------------------------------------------------------ #
@@ -551,3 +563,429 @@ def _assess_server_info(response: HttpResponseData, out: list[Observation]) -> N
                     location="response-headers",
                 )
             )
+
+
+_VERSION_RE = r"(?:^|[^0-9a-zA-Z])(?:v?\d+\.\d+(?:\.\d+)*|\/\d+)"
+_DEBUG_HEADER_PREFIX = "x-debug"
+
+
+def _parse_cookie_attributes(cookie: str) -> tuple[str, set[str], dict[str, str]]:
+    """(name, flag-set, key=value map) for one Set-Cookie header value."""
+    parts = cookie.split(";")
+    name_part = parts[0].strip()
+    name = name_part.split("=", 1)[0].strip() if "=" in name_part else name_part
+    flags: set[str] = set()
+    pairs: dict[str, str] = {}
+    for token in parts[1:]:
+        token = token.strip()
+        if not token:
+            continue
+        if "=" in token:
+            key, _, value = token.partition("=")
+            key = key.strip().lower()
+            flags.add(key)
+            pairs[key] = value.strip()
+        else:
+            flags.add(token.lower())
+    return name, flags, pairs
+
+
+def _assess_cookie_prefixes(
+    response: HttpResponseData,
+    location: str,
+    out: list[Observation],
+    findings_out: list[Finding],
+) -> None:
+    """__Host- / __Secure- prefix rules (deterministic, syntactic).
+
+    __Host- requires Secure + Path=/ + no Domain; __Secure- requires
+    Secure. Violations aggregate into one finding; cookie values are
+    never stored (names only).
+    """
+    cookies = [v for k, v in response.headers if k.lower() == "set-cookie"]
+    violations: list[str] = []
+    for cookie in cookies:
+        name, flags, pairs = _parse_cookie_attributes(cookie)
+        lowered = name.lower()
+        if lowered.startswith("__host-"):
+            missing = []
+            if "secure" not in flags:
+                missing.append("Secure")
+            if pairs.get("path", "") != "/":
+                missing.append("Path=/")
+            if "domain" in flags:
+                missing.append("no-Domain")
+            if missing:
+                violations.append(f"{name} (missing {'+'.join(missing)})")
+        elif lowered.startswith("__secure-"):
+            if "secure" not in flags:
+                violations.append(f"{name} (missing Secure)")
+    if not violations:
+        return
+    evidence = bound_evidence("; ".join(violations[:MAX_COOKIE_NAMES_IN_EVIDENCE]))
+    observation = Observation.create(
+        category=_ENGINE_CATEGORY_COOKIES,
+        title="Cookie prefix violation",
+        detail="Prefixed cookies do not meet the naming requirements browsers enforce.",
+        evidence=evidence,
+        location=location,
+    )
+    out.append(observation)
+    findings_out.append(
+        Finding.create(
+            category=_ENGINE_CATEGORY_COOKIES,
+            title="Cookie prefix violation",
+            description=(
+                "Cookies using the __Host- or __Secure- prefix miss required "
+                "attributes, so browsers ignore the prefix protection."
+            ),
+            severity=Severity.LOW,
+            confidence=Confidence.HIGH,
+            evidence=evidence,
+            location=location,
+            recommendation="Give __Host- cookies Secure + Path=/ and no Domain; "
+            "give __Secure- cookies Secure.",
+            observation_ids=(observation.id,),
+        )
+    )
+
+
+def _assess_cors(
+    response: HttpResponseData,
+    location: str,
+    out: list[Observation],
+    findings_out: list[Finding],
+) -> None:
+    """Passive CORS posture from the response's own ACAO/ACAC headers.
+
+    Only combinations visible without sending an Origin are claimed: a
+    credentialed wildcard is a real vulnerability; a bare wildcard is
+    low-risk. Origin reflection cannot be detected from this controlled
+    request (no Origin is sent) and is deliberately not claimed.
+    """
+    header_map = {k.lower(): v for k, v in response.headers}
+    allow_origin = (header_map.get("access-control-allow-origin") or "").strip()
+    allow_creds = (header_map.get("access-control-allow-credentials") or "").strip().lower()
+    if allow_origin != "*":
+        return
+    credentialed = allow_creds == "true"
+    observation = Observation.create(
+        category=_ENGINE_CATEGORY_HEADERS,
+        title="Wildcard CORS origin",
+        detail=(
+            "Access-Control-Allow-Origin is '*' "
+            + ("with credentials allowed." if credentialed else "without credentials.")
+        ),
+        evidence="Access-Control-Allow-Origin: *"
+        + (f"; Access-Control-Allow-Credentials: {allow_creds}" if allow_creds else ""),
+        location=location,
+    )
+    out.append(observation)
+    if credentialed:
+        findings_out.append(
+            Finding.create(
+                category=_ENGINE_CATEGORY_HEADERS,
+                title="Credentialed CORS wildcard",
+                description=(
+                    "Any origin may read credentialed responses, defeating "
+                    "the same-origin policy for authenticated users."
+                ),
+                severity=Severity.MEDIUM,
+                confidence=Confidence.HIGH,
+                evidence="Access-Control-Allow-Origin: *; Access-Control-Allow-Credentials: true",
+                location=location,
+                recommendation="Echo explicit trusted origins instead of '*', "
+                "or stop allowing credentials.",
+                observation_ids=(observation.id,),
+            )
+        )
+    else:
+        findings_out.append(
+            Finding.create(
+                category=_ENGINE_CATEGORY_HEADERS,
+                title="Wildcard CORS origin",
+                description="Any origin may read unauthenticated responses.",
+                severity=Severity.INFO,
+                confidence=Confidence.HIGH,
+                evidence="Access-Control-Allow-Origin: *",
+                location=location,
+                recommendation="Restrict to explicit origins when the data is sensitive.",
+                observation_ids=(observation.id,),
+            )
+        )
+
+
+def _assess_cache(
+    response: HttpResponseData,
+    location: str,
+    out: list[Observation],
+    findings_out: list[Finding],
+) -> None:
+    """Shared-cache storage of cookie-bearing responses.
+
+    Only the clear-cut case is claimed: cookies present plus an explicit
+    shared-cache directive (public/s-maxage). Absent or private directives
+    produce no finding (insufficient evidence, not a pass).
+    """
+    header_map = {k.lower(): v for k, v in response.headers}
+    cookies = [v for k, v in response.headers if k.lower() == "set-cookie"]
+    if not cookies:
+        return
+    cache_control = header_map.get("cache-control", "")
+    directives = {d.strip().split("=", 1)[0].lower() for d in cache_control.split(",")}
+    if not ({"public", "s-maxage"} & directives):
+        return
+    names = [redact_cookie_value(c).split(" ", 1)[0] for c in cookies]
+    evidence = bound_evidence(
+        f"Cache-Control: {cache_control}; cookies: "
+        + ", ".join(names[:MAX_COOKIE_NAMES_IN_EVIDENCE])
+    )
+    observation = Observation.create(
+        category=_ENGINE_CATEGORY_HEADERS,
+        title="Cacheable sensitive response",
+        detail="A cookie-bearing response explicitly permits shared caching.",
+        evidence=evidence,
+        location=location,
+    )
+    out.append(observation)
+    findings_out.append(
+        Finding.create(
+            category=_ENGINE_CATEGORY_HEADERS,
+            title="Cacheable sensitive response",
+            description=(
+                "Shared caches may store a response tied to one user's "
+                "session and serve it to others."
+            ),
+            severity=Severity.LOW,
+            confidence=Confidence.MEDIUM,
+            evidence=evidence,
+            location=location,
+            recommendation="Send Cache-Control: private, no-store on session responses.",
+            observation_ids=(observation.id,),
+        )
+    )
+
+
+def _parse_csp_directives(value: str) -> dict[str, list[str]]:
+    directives: dict[str, list[str]] = {}
+    for chunk in value.split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        parts = chunk.split()
+        directives[parts[0].lower()] = parts[1:]
+    return directives
+
+
+def _hsts_max_age(value: str) -> int | None:
+    for chunk in value.split(";"):
+        chunk = chunk.strip()
+        if chunk.lower().startswith("max-age="):
+            try:
+                return int(chunk.split("=", 1)[1].strip().strip('"'))
+            except ValueError:
+                return None
+    return None
+
+
+def _assess_header_values(
+    response: HttpResponseData,
+    location: str,
+    out: list[Observation],
+    findings_out: list[Finding],
+) -> None:
+    """Value-level checks for PRESENT security headers.
+
+    Absence is owned by _assess_headers; here only demonstrably weak
+    values are claimed. Titles reuse the header-name identity on purpose:
+    a weak value is the same issue class as the missing header, and
+    severity transitions surface through comparison.
+    """
+    header_map = {k.lower(): v for k, v in response.headers}
+
+    referrer = header_map.get("referrer-policy")
+    if referrer is not None and referrer.strip().lower() == "unsafe-url":
+        observation = Observation.create(
+            category=_ENGINE_CATEGORY_HEADERS,
+            title="Permissive Referrer-Policy value",
+            detail="Referrer-Policy: unsafe-url leaks full URLs to any origin.",
+            evidence=f"Referrer-Policy: {referrer}",
+            location=location,
+        )
+        out.append(observation)
+        findings_out.append(
+            Finding.create(
+                category=_ENGINE_CATEGORY_HEADERS,
+                title="Permissive Referrer-Policy value",
+                description="Full request URLs (often carrying tokens/ids) leak cross-origin.",
+                severity=Severity.LOW,
+                confidence=Confidence.HIGH,
+                evidence=f"Referrer-Policy: {referrer}",
+                location=location,
+                recommendation="Use strict-origin-when-cross-origin or stricter.",
+                observation_ids=(observation.id,),
+            )
+        )
+
+    csp = header_map.get("content-security-policy")
+    if csp is not None:
+        directives = _parse_csp_directives(csp)
+        weak_sources = []
+        for name in ("script-src", "style-src", "default-src"):
+            for token in directives.get(name, []):
+                if token.strip("'\"").lower() in {"unsafe-inline", "unsafe-eval"}:
+                    weak_sources.append(f"{name} {token}")
+        if weak_sources:
+            evidence = bound_evidence("; ".join(weak_sources))
+            observation = Observation.create(
+                category=_ENGINE_CATEGORY_HEADERS,
+                title="Permissive Content-Security-Policy value",
+                detail="The policy allows inline/eval execution, blunting XSS protection.",
+                evidence=evidence,
+                location=location,
+            )
+            out.append(observation)
+            findings_out.append(
+                Finding.create(
+                    category=_ENGINE_CATEGORY_HEADERS,
+                    title="Permissive Content-Security-Policy value",
+                    description="unsafe-inline/unsafe-eval keeps XSS exploitable despite CSP.",
+                    severity=Severity.LOW,
+                    confidence=Confidence.HIGH,
+                    evidence=evidence,
+                    location=location,
+                    recommendation="Remove unsafe-inline/unsafe-eval; use nonces or hashes.",
+                    observation_ids=(observation.id,),
+                )
+            )
+
+    hsts = header_map.get("strict-transport-security")
+    if hsts is not None and not scheme_is_http(response):
+        max_age = _hsts_max_age(hsts)
+        if max_age is None or max_age < 31536000:
+            observation = Observation.create(
+                category=_ENGINE_CATEGORY_HEADERS,
+                title="Weak Strict-Transport-Security max-age",
+                detail="HSTS max-age is missing or under one year.",
+                evidence=f"Strict-Transport-Security: {hsts}",
+                location=location,
+            )
+            out.append(observation)
+            findings_out.append(
+                Finding.create(
+                    category=_ENGINE_CATEGORY_HEADERS,
+                    title="Weak Strict-Transport-Security max-age",
+                    description="Short HSTS lifetimes leave long windows without upgrade protection.",
+                    severity=Severity.LOW,
+                    confidence=Confidence.HIGH,
+                    evidence=f"Strict-Transport-Security: {hsts}",
+                    location=location,
+                    recommendation="Set max-age=31536000 (or longer) with includeSubDomains.",
+                    observation_ids=(observation.id,),
+                )
+            )
+        elif "includesubdomains" not in hsts.lower().replace(" ", "").replace("-", ""):
+            out.append(
+                Observation.create(
+                    category=_ENGINE_CATEGORY_HEADERS,
+                    title="HSTS without includeSubDomains",
+                    detail="Subdomains are not covered by the HSTS policy.",
+                    evidence=f"Strict-Transport-Security: {hsts}",
+                    location=location,
+                )
+            )
+
+
+def _assess_technology(
+    response: HttpResponseData, location: str, out: list[Observation]
+) -> tuple[Technology, ...]:
+    """Passive technology inventory (observations only, never findings).
+
+    Consumes the already-fetched headers/body through the pure
+    ``technology`` detector: no new requests, no fingerprint identity,
+    no severity. Observations ride the normal result path into the
+    evidence set so analysts (human or AI) gain asset context; the
+    returned structured rows feed target-technology persistence.
+    """
+    technologies = detect_technologies(response.headers, response.body)
+    for tech in technologies:
+        out.append(
+            Observation.create(
+                category=tech.observation_category(),
+                title=tech.title(),
+                detail=tech.detail(),
+                evidence=tech.evidence,
+                location=location,
+            )
+        )
+    return technologies
+
+
+def _assess_server_detail(
+    response: HttpResponseData,
+    location: str,
+    out: list[Observation],
+    findings_out: list[Finding],
+) -> None:
+    """Version disclosure and debug indicators (one finding per header).
+
+    Per-header identity keeps lifecycle precise: fixing one header
+    resolves its finding while other disclosures persist.
+    """
+    header_map = {k.lower(): v for k, v in response.headers}
+    version_headers = ("server", "x-powered-by", "x-aspnet-version", "x-aspnetmvc-version")
+    for name in version_headers:
+        value = header_map.get(name)
+        if not value:
+            continue
+        disclosed = name in ("x-aspnet-version", "x-aspnetmvc-version") or bool(
+            re.search(_VERSION_RE, value, re.IGNORECASE)
+        )
+        if not disclosed:
+            continue
+        evidence = bound_evidence(f"{name}: {value}")
+        observation = Observation.create(
+            category=_ENGINE_CATEGORY_SERVER,
+            title=f"Server version disclosed: {name}",
+            detail="A response header exposes implementation version detail useful for targeting.",
+            evidence=evidence,
+            location=location,
+        )
+        out.append(observation)
+        findings_out.append(
+            Finding.create(
+                category=_ENGINE_CATEGORY_SERVER,
+                title=f"Server version disclosed: {name}",
+                description="Version disclosure helps attackers match exploits to this stack.",
+                severity=Severity.LOW,
+                confidence=Confidence.HIGH,
+                evidence=evidence,
+                location=location,
+                recommendation="Strip version tokens from response headers.",
+                observation_ids=(observation.id,),
+            )
+        )
+    debug_names = [k for k, v in response.headers if k.lower().startswith(_DEBUG_HEADER_PREFIX)]
+    if debug_names:
+        evidence = bound_evidence(", ".join(sorted({n.lower() for n in debug_names})))
+        observation = Observation.create(
+            category=_ENGINE_CATEGORY_SERVER,
+            title="Debug header exposed",
+            detail="Debug-mode headers suggest a non-production configuration.",
+            evidence=evidence,
+            location=location,
+        )
+        out.append(observation)
+        findings_out.append(
+            Finding.create(
+                category=_ENGINE_CATEGORY_SERVER,
+                title="Debug header exposed",
+                description="Debug headers indicate verbose/diagnostic behavior is enabled.",
+                severity=Severity.LOW,
+                confidence=Confidence.HIGH,
+                evidence=evidence,
+                location=location,
+                recommendation="Disable debug headers outside development.",
+                observation_ids=(observation.id,),
+            )
+        )

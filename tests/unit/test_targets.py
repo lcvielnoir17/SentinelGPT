@@ -16,9 +16,6 @@ from src.config.settings import get_settings
 from src.domain.users.token_service import create_access_token
 from src.infrastructure.database.connection import get_db_session
 from src.infrastructure.database.models import Target, User
-from src.infrastructure.database.repositories.membership_repository import (
-    MembershipRepository,
-)
 from src.infrastructure.database.repositories.target_repository import (
     TargetRepository,
 )
@@ -42,7 +39,6 @@ def _make_user(email: str = "analyst@example.com") -> User:
 
 
 def _make_target(
-    owner_organization_id: uuid.UUID | None,
     owner_user_id: uuid.UUID | None,
     url: str,
     created_at: datetime | None = None,
@@ -50,7 +46,6 @@ def _make_target(
 ) -> Target:
     return Target(
         id=uuid.uuid4(),
-        owner_organization_id=owner_organization_id,
         owner_user_id=owner_user_id,
         hostname=url.split("//", 1)[1].rstrip("/"),
         normalized_url=url,
@@ -61,30 +56,20 @@ def _make_target(
 
 @pytest.fixture
 def state(mocker):
-    """In-memory persistence + membership state shared by patched repos."""
+    """In-memory persistence shared by patched repos."""
     state: dict[str, object] = {
         "targets": [],  # all persisted/seeded Target rows
-        "memberships": set(),  # {(user_id, organization_id)}
     }
 
-    def _matches(row: Target, org_id, user_id) -> bool:
-        ok_org = (
-            row.owner_organization_id is None
-            if org_id is None
-            else row.owner_organization_id == org_id
-        )
-        ok_user = row.owner_user_id is None if user_id is None else row.owner_user_id == user_id
-        return ok_org and ok_user
+    def _matches(row: Target, user_id) -> bool:
+        return row.owner_user_id == user_id
 
-    async def fake_find_by_owner_and_url(
-        _self, *, owner_organization_id, owner_user_id, normalized_url
-    ):
+    async def fake_find_by_owner_and_url(_self, *, owner_user_id, normalized_url):
         return next(
             (
                 t
                 for t in state["targets"]
-                if _matches(t, owner_organization_id, owner_user_id)
-                and t.normalized_url == normalized_url
+                if _matches(t, owner_user_id) and t.normalized_url == normalized_url
             ),
             None,
         )
@@ -95,7 +80,6 @@ def state(mocker):
     async def fake_list_for_owner(
         _self,
         *,
-        owner_organization_id,
         owner_user_id,
         include_archived,
         limit,
@@ -105,8 +89,7 @@ def state(mocker):
         rows = [
             t
             for t in state["targets"]
-            if _matches(t, owner_organization_id, owner_user_id)
-            and (include_archived or not t.is_archived)
+            if _matches(t, owner_user_id) and (include_archived or not t.is_archived)
         ]
         rows.sort(key=lambda t: (t.created_at, str(t.id)), reverse=True)
         if cursor_created_at is not None and cursor_id is not None:
@@ -120,15 +103,11 @@ def state(mocker):
     async def fake_flush(_self) -> None:
         return None
 
-    async def fake_is_member(_self, user_id, organization_id) -> bool:
-        return (user_id, organization_id) in state["memberships"]
-
     mocker.patch.object(TargetRepository, "find_by_owner_and_url", fake_find_by_owner_and_url)
     mocker.patch.object(TargetRepository, "get_by_id", fake_get_by_target_id)
     mocker.patch.object(TargetRepository, "list_for_owner", fake_list_for_owner)
     mocker.patch.object(TargetRepository, "add", fake_add)
     mocker.patch.object(TargetRepository, "flush", fake_flush)
-    mocker.patch.object(MembershipRepository, "is_member", fake_is_member)
     return state
 
 
@@ -211,7 +190,7 @@ async def test_authenticated_personal_creation_persists(client: AsyncClient, sta
     assert body["hostname"] == "example.com"
     assert body["url"] == "https://example.com/"
     assert body["ownerUserId"] == str(principal.id)
-    assert body["ownerOrganizationId"] is None
+    assert "ownerOrganizationId" not in body
     assert body["isArchived"] is False
     assert body["status"] == "PENDING_ATTESTATION"
     assert "createdAt" in body
@@ -226,29 +205,10 @@ async def test_authenticated_personal_creation_persists(client: AsyncClient, sta
 
 
 @pytest.mark.asyncio
-async def test_create_in_member_organization(client: AsyncClient, state) -> None:
-    principal: User = state["principal_row"]
-    org_id = uuid.uuid4()
-    state["memberships"].add((principal.id, org_id))
-
-    response = await client.post(
-        "/api/v1/targets",
-        json={
-            "hostname": "example.com",
-            "url": "https://example.com",
-            "ownerOrganizationId": str(org_id),
-        },
-        cookies=_auth_cookies(principal),
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert body["ownerOrganizationId"] == str(org_id)
-    assert body["ownerUserId"] is None
-
-
-@pytest.mark.asyncio
-async def test_create_in_non_member_organization_forbidden(client: AsyncClient, state) -> None:
+async def test_unknown_owner_field_is_ignored_personal_target_created(
+    client: AsyncClient, state
+) -> None:
+    """A stale ownerOrganizationId payload is ignored: the target is personal."""
     principal: User = state["principal_row"]
     response = await client.post(
         "/api/v1/targets",
@@ -260,8 +220,10 @@ async def test_create_in_non_member_organization_forbidden(client: AsyncClient, 
         cookies=_auth_cookies(principal),
     )
 
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "FORBIDDEN"
+    assert response.status_code == 201
+    body = response.json()
+    assert body["ownerUserId"] == str(principal.id)
+    assert "ownerOrganizationId" not in body
 
 
 @pytest.mark.asyncio
@@ -269,7 +231,6 @@ async def test_duplicate_target_conflict(client: AsyncClient, state) -> None:
     principal: User = state["principal_row"]
     state["targets"].append(
         _make_target(
-            owner_organization_id=None,
             owner_user_id=principal.id,
             url="https://example.com/",
         )
@@ -293,7 +254,6 @@ async def test_trailing_dot_form_conflicts_with_canonical_target(
     principal: User = state["principal_row"]
     state["targets"].append(
         _make_target(
-            owner_organization_id=None,
             owner_user_id=principal.id,
             url="https://example.com/",
         )
@@ -345,9 +305,7 @@ async def test_ssrf_and_validation_failures_are_unprocessable_target(
 @pytest.mark.asyncio
 async def test_get_own_target(client: AsyncClient, state) -> None:
     principal: User = state["principal_row"]
-    target = _make_target(
-        owner_organization_id=None, owner_user_id=principal.id, url="https://example.com/"
-    )
+    target = _make_target(owner_user_id=principal.id, url="https://example.com/")
     state["targets"].append(target)
 
     response = await client.get(f"/api/v1/targets/{target.id}", cookies=_auth_cookies(principal))
@@ -360,9 +318,7 @@ async def test_get_own_target(client: AsyncClient, state) -> None:
 async def test_other_users_personal_target_is_not_found(client: AsyncClient, state) -> None:
     """No cross-tenant leakage: foreign resources look identical to missing."""
     principal: User = state["principal_row"]
-    other = _make_target(
-        owner_organization_id=None, owner_user_id=uuid.uuid4(), url="https://secret.example/"
-    )
+    other = _make_target(owner_user_id=uuid.uuid4(), url="https://secret.example/")
     state["targets"].append(other)
 
     response = await client.get(f"/api/v1/targets/{other.id}", cookies=_auth_cookies(principal))
@@ -372,35 +328,13 @@ async def test_other_users_personal_target_is_not_found(client: AsyncClient, sta
 
 
 @pytest.mark.asyncio
-async def test_org_target_hidden_from_non_member(client: AsyncClient, state) -> None:
-    principal: User = state["principal_row"]
-    org_target = _make_target(
-        owner_organization_id=uuid.uuid4(), owner_user_id=None, url="https://corp.example/"
-    )
-    state["targets"].append(org_target)
-
-    response = await client.get(
-        f"/api/v1/targets/{org_target.id}", cookies=_auth_cookies(principal)
-    )
-    assert response.status_code == 404
-
-    # ...but visible to an actual member of that organization.
-    state["memberships"].add((principal.id, org_target.owner_organization_id))
-    member_response = await client.get(
-        f"/api/v1/targets/{org_target.id}", cookies=_auth_cookies(principal)
-    )
-    assert member_response.status_code == 200
-
-
-@pytest.mark.asyncio
 async def test_listing_scopes_personal_targets_only(client: AsyncClient, state) -> None:
     principal: User = state["principal_row"]
     old = datetime.now(UTC) - timedelta(hours=2)
-    mine_old = _make_target(None, principal.id, "https://old.example/", created_at=old)
-    mine_new = _make_target(None, principal.id, "https://new.example/")
-    theirs = _make_target(None, uuid.uuid4(), "https://theirs.example/")
-    org_target = _make_target(uuid.uuid4(), None, "https://corp.example/")
-    state["targets"] += [mine_old, mine_new, theirs, org_target]
+    mine_old = _make_target(principal.id, "https://old.example/", created_at=old)
+    mine_new = _make_target(principal.id, "https://new.example/")
+    theirs = _make_target(uuid.uuid4(), "https://theirs.example/")
+    state["targets"] += [mine_old, mine_new, theirs]
 
     response = await client.get("/api/v1/targets", cookies=_auth_cookies(principal))
 
@@ -412,36 +346,25 @@ async def test_listing_scopes_personal_targets_only(client: AsyncClient, state) 
 
 
 @pytest.mark.asyncio
-async def test_listing_by_organization_membership(client: AsyncClient, state) -> None:
+async def test_unknown_organization_query_is_ignored(client: AsyncClient, state) -> None:
+    """A stale organizationId query is ignored: only personal targets list."""
     principal: User = state["principal_row"]
-    org_id = uuid.uuid4()
-    state["memberships"].add((principal.id, org_id))
-    org_target = _make_target(org_id, None, "https://corp.example/")
-    personal = _make_target(None, principal.id, "https://personal.example/")
-    state["targets"] += [org_target, personal]
+    personal = _make_target(principal.id, "https://personal.example/")
+    state["targets"].append(personal)
 
-    listed = await client.get(
-        f"/api/v1/targets?organizationId={org_id}", cookies=_auth_cookies(principal)
-    )
-    assert [i["id"] for i in listed.json()["items"]] == [str(org_target.id)]
-
-
-@pytest.mark.asyncio
-async def test_listing_foreign_organization_forbidden(client: AsyncClient, state) -> None:
-    principal: User = state["principal_row"]
     response = await client.get(
         f"/api/v1/targets?organizationId={uuid.uuid4()}",
         cookies=_auth_cookies(principal),
     )
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "FORBIDDEN"
+    assert response.status_code == 200
+    assert [i["id"] for i in response.json()["items"]] == [str(personal.id)]
 
 
 @pytest.mark.asyncio
 async def test_include_archived_filter(client: AsyncClient, state) -> None:
     principal: User = state["principal_row"]
-    archived = _make_target(None, principal.id, "https://gone.example/", is_archived=True)
-    active = _make_target(None, principal.id, "https://live.example/")
+    archived = _make_target(principal.id, "https://gone.example/", is_archived=True)
+    active = _make_target(principal.id, "https://live.example/")
     state["targets"] += [archived, active]
 
     default_list = await client.get("/api/v1/targets", cookies=_auth_cookies(principal))
@@ -459,8 +382,8 @@ async def test_include_archived_filter(client: AsyncClient, state) -> None:
 @pytest.mark.asyncio
 async def test_keyset_pagination_walks_all_pages(client: AsyncClient, state) -> None:
     principal: User = state["principal_row"]
-    first = _make_target(None, principal.id, "https://first.example/")
-    second = _make_target(None, principal.id, "https://second.example/")
+    first = _make_target(principal.id, "https://first.example/")
+    second = _make_target(principal.id, "https://second.example/")
     state["targets"] += [second, first]  # insertion order != sort order
 
     page_one = await client.get("/api/v1/targets?limit=1", cookies=_auth_cookies(principal))
@@ -501,7 +424,7 @@ async def test_malformed_cursor_is_validation_error(client: AsyncClient, state) 
 @pytest.mark.asyncio
 async def test_patch_archive_flag(client: AsyncClient, state) -> None:
     principal: User = state["principal_row"]
-    target = _make_target(None, principal.id, "https://example.com/")
+    target = _make_target(principal.id, "https://example.com/")
     state["targets"].append(target)
 
     response = await client.patch(
@@ -518,7 +441,7 @@ async def test_patch_archive_flag(client: AsyncClient, state) -> None:
 async def test_patch_rejects_immutable_fields(client: AsyncClient, state) -> None:
     """hostname/URL are immutable — a URL change is a new target (Ch5 §4)."""
     principal: User = state["principal_row"]
-    target = _make_target(None, principal.id, "https://example.com/")
+    target = _make_target(principal.id, "https://example.com/")
     state["targets"].append(target)
 
     response = await client.patch(
@@ -534,7 +457,7 @@ async def test_patch_rejects_immutable_fields(client: AsyncClient, state) -> Non
 @pytest.mark.asyncio
 async def test_delete_soft_deletes_own_target(client: AsyncClient, state) -> None:
     principal: User = state["principal_row"]
-    target = _make_target(None, principal.id, "https://example.com/")
+    target = _make_target(principal.id, "https://example.com/")
     state["targets"].append(target)
 
     response = await client.delete(f"/api/v1/targets/{target.id}", cookies=_auth_cookies(principal))
@@ -545,7 +468,7 @@ async def test_delete_soft_deletes_own_target(client: AsyncClient, state) -> Non
 @pytest.mark.asyncio
 async def test_delete_foreign_target_is_not_found(client: AsyncClient, state) -> None:
     principal: User = state["principal_row"]
-    other = _make_target(None, uuid.uuid4(), "https://secret.example/")
+    other = _make_target(uuid.uuid4(), "https://secret.example/")
     state["targets"].append(other)
 
     response = await client.delete(f"/api/v1/targets/{other.id}", cookies=_auth_cookies(principal))
@@ -597,18 +520,37 @@ def test_base64_cursor_payload_shape() -> None:
     assert set(raw) == {"c", "i"}
 
 
-def test_migration_chain_has_single_head_at_0008() -> None:
-    """The linear chain must extend to the tenant/audit index revision."""
+def test_migration_chain_is_linear_with_single_head() -> None:
+    """The migration chain is linear: one head, every down_revision linked."""
     from importlib import import_module
+    from pathlib import Path
 
-    head = import_module(
-        "src.infrastructure.database.migrations.versions.0008_tenant_audit_indexes"
-    )
-    assert head.revision == "0008"
-    assert head.down_revision == "0007"
+    versions = Path("backend/src/infrastructure/database/migrations/versions")
+    if not versions.is_dir():
+        versions = Path(__file__).resolve().parent.parent.parent / (
+            "backend/src/infrastructure/database/migrations/versions"
+        )
+    modules = {}
+    for path in versions.glob("*.py"):
+        if path.name.startswith("__"):
+            continue
+        module = import_module(f"src.infrastructure.database.migrations.versions.{path.stem}")
+        modules[module.revision] = module.down_revision
 
-    prev = import_module("src.infrastructure.database.migrations.versions.0007_firebase_identity")
-    assert prev.revision == "0007"
+    assert modules, "no migrations found"
+    referenced = {d for d in modules.values() if d is not None}
+    heads = [rev for rev in modules if rev not in referenced]
+    assert len(heads) == 1, f"expected a single head, found: {sorted(heads)}"
+    # Every down_revision resolves to a known revision (or None for 0001).
+    for rev, down in modules.items():
+        assert down is None or down in modules, f"{rev} has dangling down_revision {down!r}"
+
+    from src.infrastructure.database.models import Base
+
+    assert "target" in Base.metadata.tables
+    # Organization tables are gone from the model (migration 0011).
+    assert "organization" not in Base.metadata.tables
+    assert "organization_membership" not in Base.metadata.tables
 
 
 @pytest.mark.asyncio
@@ -644,6 +586,5 @@ async def test_concurrent_duplicate_target_returns_409_not_500(mocker) -> None:
         await service.register_target(
             hostname="example.com",
             url="https://example.com/",
-            owner_organization_id=None,
         )
     assert calls["find"] == 2

@@ -35,7 +35,6 @@ def _target(owner_id: uuid.UUID, archived: bool = False) -> Any:
     row = type("T", (), {})()
     row.id = uuid.uuid4()
     row.owner_user_id = owner_id
-    row.owner_organization_id = None
     row.is_archived = archived
     return row
 
@@ -76,9 +75,6 @@ def _service(
     from src.infrastructure.database.repositories.attestation_repository import (
         AttestationRepository,
     )
-    from src.infrastructure.database.repositories.membership_repository import (
-        MembershipRepository,
-    )
     from src.infrastructure.database.repositories.target_repository import (
         TargetRepository,
     )
@@ -98,9 +94,6 @@ def _service(
     async def fake_flush(_self: object) -> None:
         return None
 
-    async def fake_is_member(_self: object, _u: uuid.UUID, _o: uuid.UUID) -> bool:
-        return True
-
     async def fake_record(_self: object, **kwargs: Any) -> Any:
         audits.append(kwargs)
         return None
@@ -110,7 +103,6 @@ def _service(
     mocker.patch.object(AttestationRepository, "method_code_map", fake_method_map)
     mocker.patch.object(AttestationRepository, "add", fake_add)
     mocker.patch.object(AttestationRepository, "flush", fake_flush)
-    mocker.patch.object(MembershipRepository, "is_member", fake_is_member)
     mocker.patch("src.domain.audit.audit_service.AuditService.record", fake_record)
 
     session = _FakeSession()

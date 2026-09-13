@@ -33,6 +33,7 @@ SCAN_STATUS_CANCELLED: str = "CANCELLED"
 
 # Engine Codes
 ENGINE_HEADERS: str = "headers-analyzer"
+ENGINE_TLS: str = "ssl-inspector"
 
 # Celery queue names (SRS Ch6 §6: separate queues per concern).
 CELERY_QUEUE_SCAN: str = "scan"

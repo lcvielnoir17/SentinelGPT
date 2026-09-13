@@ -20,6 +20,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -272,4 +273,239 @@ class ScanAiAssessment(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, server_default=func.now(), nullable=False
+    )
+
+
+class FindingEnrichment(Base):
+    """Advisory vulnerability metadata bound to a finding fingerprint.
+
+    Enrichment is NEVER canonical identity: it must not change the
+    fingerprint, evidence, lifecycle, severity, or authorization of the
+    underlying finding. Rows are keyed by (fingerprint, target) so they
+    survive rescans, and carry their provenance (``source``) so future
+    importers (manual curation, offline feeds) cannot silently overwrite
+    each other. The scanner execution path never reads this table.
+    """
+
+    __tablename__ = "finding_enrichment"
+    __table_args__ = (
+        UniqueConstraint(
+            "fingerprint",
+            "target_id",
+            "source",
+            "external_ref",
+            name="uq_finding_enrichment_identity",
+        ),
+        CheckConstraint(
+            "cvss_score IS NULL OR (cvss_score >= 0 AND cvss_score <= 10)",
+            name="cvss_range",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("target.id", ondelete="RESTRICT"), nullable=False
+    )
+    # Stable deduplication key within (fingerprint, target, source): a CVE
+    # id, a CWE id, or 'manual' for hand-curated notes.
+    source: Mapped[str] = mapped_column(String(30), nullable=False)
+    external_ref: Mapped[str] = mapped_column(String(40), nullable=False)
+    cve_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    cwe_id: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    cvss_score: Mapped[float | None] = mapped_column(Numeric(3, 1), nullable=True)
+    cvss_vector: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    references: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    affected_technology: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    remediation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utc_now,
+        onupdate=func.now(),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class FindingRemediation(Base):
+    """Operator remediation workflow state bound to a finding fingerprint.
+
+    This is workflow metadata, NEVER canonical security truth: ``status``
+    records what the operator intends (TODO → IN_PROGRESS → DONE, or
+    DEFERRED), while the canonical lifecycle (NEW/PERSISTENT/RESOLVED/
+    REGRESSED) is derived exclusively from deterministic scan evidence.
+    Marking DONE does not resolve a finding; only a clean rescan does.
+    Rows are keyed by (fingerprint, target) so workflow state survives
+    rescans — the verify-fix story. Gemini must never write this table.
+
+    M8 collaboration (still workflow metadata, still not canonical):
+    ``assignee_user_id`` records who owns the work (owner-controlled,
+    no visibility granted — strict ownership is unchanged),
+    ``due_at`` is an optional timezone-aware deadline (overdue is
+    derived, never stored), and free-form discussion lives in the
+    append-only ``remediation_comment`` table so authorship survives.
+    """
+
+    __tablename__ = "finding_remediation"
+    __table_args__ = (
+        UniqueConstraint(
+            "fingerprint",
+            "target_id",
+            name="uq_finding_remediation_identity",
+        ),
+        CheckConstraint(
+            "status IN ('TODO', 'IN_PROGRESS', 'DONE', 'DEFERRED')",
+            name="ck_remediation_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("target.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="TODO")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("user.id", ondelete="RESTRICT"), nullable=True
+    )
+    # Verify-fix linkage (M4): the rescan created to check the fix.
+    # Verification STATE is always derived live (compare original vs this
+    # scan), never stored, so it cannot go stale.
+    verified_in_scan_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("scan.id", ondelete="RESTRICT"), nullable=True
+    )
+    # M8 collaboration: controlled assignment between platform users.
+    # Owner-controlled marker only — assigning never grants visibility
+    # into the finding (strict ownership is unchanged).
+    assignee_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("user.id", ondelete="RESTRICT"), nullable=True
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    assigned_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("user.id", ondelete="RESTRICT"), nullable=True
+    )
+    # M8 collaboration: optional timezone-aware deadline. Overdue is
+    # derived (due passed and status not DONE), never stored.
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utc_now,
+        onupdate=func.now(),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class RemediationComment(Base):
+    """Append-only collaboration note on a remediation workflow row (M8).
+
+    The mutable ``notes`` field on ``FindingRemediation`` keeps latest
+    operator scratch; this table is the attributable history
+    collaboration needs (who said what, when). Rows never mutate
+    canonical finding data — they carry only the fingerprint identity,
+    the author, and bounded plain text. Excluded from reports by design.
+    """
+
+    __tablename__ = "remediation_comment"
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(body) >= 1 AND char_length(body) <= 2000",
+            name="ck_remediation_comment_body",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("target.id", ondelete="RESTRICT"), nullable=False
+    )
+    author_user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("user.id", ondelete="RESTRICT"), nullable=False
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, server_default=func.now(), nullable=False
+    )
+
+
+class ScanSchedule(Base):
+    """Recurring authorized-scan schedule (automation over scan creation).
+
+    A schedule never scans by itself: each due tick is claimed atomically
+    and executed through the normal scan-creation path (ownership,
+    attestation, rate and quota gates). Ticks that cannot pass the gates
+    are recorded in last_status and last_detail, never executed anyway.
+    """
+
+    __tablename__ = "scan_schedule"
+    __table_args__ = (
+        CheckConstraint(
+            "interval_seconds >= 600 AND interval_seconds <= 2592000",
+            name="ck_schedule_interval",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
+    )
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("user.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    target_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("target.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    scan_profile_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("scan_profile.id", ondelete="RESTRICT"), nullable=False
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    next_run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_detail: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    last_scan_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("scan.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utc_now,
+        onupdate=func.now(),
+        server_default=func.now(),
+        nullable=False,
     )

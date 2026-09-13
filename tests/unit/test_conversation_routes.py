@@ -288,3 +288,81 @@ async def test_finding_anchor_for_foreign_scan_is_404(
         json={"findingId": uuid.uuid4().hex},
     )
     assert response.status_code == 404
+
+
+async def test_turn_sequences_exposed_and_ordered(client: AsyncClient) -> None:
+    created = await client.post("/api/v1/conversations", json={"title": "seq"})
+    conversation_id = created.json()["id"]
+
+    sent = await client.post(
+        f"/api/v1/conversations/{conversation_id}/messages", json={"content": "q"}
+    )
+    assert sent.status_code == 201
+    assert sent.json()["userMessage"]["sequence"] == 1
+    assert sent.json()["assistantMessage"]["sequence"] == 2
+
+    detail = await client.get(f"/api/v1/conversations/{conversation_id}")
+    assert [m["sequence"] for m in detail.json()["messages"]] == [1, 2]
+
+
+async def test_store_outage_maps_to_503_envelope(client: AsyncClient) -> None:
+    class OutageStore:
+        async def count_conversations(self, firebase_uid: str) -> int:  # noqa: ARG002 - outage double ignores inputs
+            raise RuntimeError("firestore down")
+
+        async def create_conversation(self, conversation):  # type: ignore[no-untyped-def]  # noqa: ARG002 - outage double ignores inputs
+            raise RuntimeError("firestore down")
+
+        async def get_conversation(self, firebase_uid: str, conversation_id: str):  # type: ignore[no-untyped-def]  # noqa: ARG002 - outage double ignores inputs
+            raise RuntimeError("firestore down")
+
+        async def list_conversations(self, firebase_uid: str, *, limit: int = 50):  # type: ignore[no-untyped-def]  # noqa: ARG002 - outage double ignores inputs
+            raise RuntimeError("firestore down")
+
+    client._transport.app.dependency_overrides[get_conversation_store] = lambda: OutageStore()  # type: ignore[attr-defined]
+    created = await client.post("/api/v1/conversations", json={"title": "t"})
+    assert created.status_code == 503
+    assert created.json()["error"]["code"] == "CONVERSATION_UNAVAILABLE"
+
+    listed = await client.get("/api/v1/conversations")
+    assert listed.status_code == 503
+    assert listed.json()["error"]["code"] == "CONVERSATION_UNAVAILABLE"
+
+
+async def test_create_with_comparison_anchor(client: AsyncClient, mocker) -> None:  # type: ignore[no-untyped-def]
+    from src.domain.conversations.service import ConversationService as _Svc
+
+    async def fake_owns(self, _a, _b, _u):  # type: ignore[no-untyped-def]
+        return True
+
+    mocker.patch.object(_Svc, "_owns_comparison", fake_owns)
+    scan_a, scan_b = str(uuid.uuid4()), str(uuid.uuid4())
+    created = await client.post(
+        "/api/v1/conversations",
+        json={"compareScanAId": scan_a, "compareScanBId": scan_b},
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["compareScanAId"] == scan_a
+    assert body["compareScanBId"] == scan_b
+    assert body["title"] == "Scan comparison"
+
+
+async def test_create_with_half_anchor_is_400(client: AsyncClient) -> None:
+    created = await client.post("/api/v1/conversations", json={"compareScanAId": str(uuid.uuid4())})
+    assert created.status_code == 400
+    assert created.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+async def test_create_with_foreign_pair_is_404(client: AsyncClient, mocker) -> None:  # type: ignore[no-untyped-def]
+    from src.domain.conversations.service import ConversationService as _Svc
+
+    async def fake_owns(self, _a, _b, _u):  # type: ignore[no-untyped-def]
+        return False
+
+    mocker.patch.object(_Svc, "_owns_comparison", fake_owns)
+    created = await client.post(
+        "/api/v1/conversations",
+        json={"compareScanAId": str(uuid.uuid4()), "compareScanBId": str(uuid.uuid4())},
+    )
+    assert created.status_code == 404

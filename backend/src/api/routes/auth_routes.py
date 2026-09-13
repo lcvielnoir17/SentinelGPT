@@ -20,8 +20,12 @@ environments NEVER relax this — is preserved by the settings validator
 and the docker-compose production overlay, which always run in
 ``production`` with the attribute on.
 
-MFA enrollment/challenge, lockout, and login audit logging remain outstanding
-Phase 1 Auth Service deliverables.
+MFA (M11, implemented below): TOTP enrollment with verification-gated
+activation, a short-lived challenge token after password authentication
+(never a session before the second factor), single-use hashed recovery
+codes, and re-authenticated disable/regeneration. Secrets never leave
+the enrollment response; audits carry ids and outcomes only. Lockout
+and login audit logging remain outstanding Phase 1 deliverables.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ import asyncio
 import uuid
 from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Header, Request, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -182,12 +186,11 @@ class FirebaseLoginRequest(BaseModel):
 
 
 class UserInfo(BaseModel):
-    """Authenticated-user representation ({ id, email, mfaEnabled, organizations })."""
+    """Authenticated-user representation ({ id, email, mfaEnabled })."""
 
     id: uuid.UUID
     email: EmailStr
     mfa_enabled: bool = Field(default=False, serialization_alias="mfaEnabled")
-    organizations: list[str] = Field(default_factory=list)
 
 
 class LoginResponse(BaseModel):
@@ -204,8 +207,93 @@ class LoginResponse(BaseModel):
     )
 
 
+class MfaChallengeResponse(BaseModel):
+    """202 response: second factor outstanding, challenge cookie issued.
+
+    No session exists yet — the caller must complete
+    POST /auth/mfa/verify before any authenticated session is minted.
+    """
+
+    mfa_required: bool = Field(default=True, serialization_alias="mfaRequired")
+    expires_in: int = Field(
+        serialization_alias="expiresIn",
+        description="Challenge lifetime in seconds.",
+    )
+
+
 def _to_user_info(account: UserAccount) -> UserInfo:
-    return UserInfo(id=account.id, email=account.email, mfa_enabled=False)
+    return UserInfo(id=account.id, email=account.email, mfa_enabled=account.mfa_enabled)
+
+
+MFA_CHALLENGE_COOKIE = "mfaChallenge"
+
+
+def _mfa_verify_limiter() -> Any:
+    """Per-user atomic throttle for second-factor attempts (fail-open)."""
+    from src.domain.scans.rate_limit import RedisAtomicRateLimiter
+    from src.infrastructure.cache.redis_client import get_redis_client
+
+    settings = get_settings()
+    return RedisAtomicRateLimiter(
+        get_redis_client(),
+        key_prefix="sgpt:mfa:verify",
+        limit=settings.mfa_verify_limit_per_minute,
+        window_seconds=60,
+    )
+
+
+def _mfa_service(session: AsyncSession) -> Any:
+    from src.domain.mfa.service import MfaService
+
+    return MfaService(session, verify_limiter=_mfa_verify_limiter())
+
+
+def _set_challenge_cookie(response: Response, token: str, settings: Settings) -> None:
+    """Short-lived challenge cookie (challenge endpoint only, never a session)."""
+    from src.domain.users.token_service import MFA_CHALLENGE_EXPIRE_MINUTES
+
+    response.set_cookie(
+        key=MFA_CHALLENGE_COOKIE,
+        value=token,
+        max_age=MFA_CHALLENGE_EXPIRE_MINUTES * 60,
+        httponly=True,
+        secure=_cookie_secure_flag(settings),
+        samesite="strict",
+        path="/api/v1/auth",
+    )
+
+
+def _clear_challenge_cookie(response: Response, settings: Settings) -> None:
+    response.delete_cookie(
+        key=MFA_CHALLENGE_COOKIE,
+        path="/api/v1/auth",
+        httponly=True,
+        secure=_cookie_secure_flag(settings),
+        samesite="strict",
+    )
+
+
+def _challenge_response(
+    response: Response, account: UserAccount, settings: Settings
+) -> MfaChallengeResponse:
+    """202 + challenge cookie for MFA-enabled accounts (no session issued).
+
+    The status is set on the injected response so cookies set here are
+    honored (returning a bare JSONResponse would drop them).
+    """
+    from src.domain.users.token_service import (
+        MFA_CHALLENGE_EXPIRE_MINUTES,
+        create_mfa_challenge_token,
+    )
+
+    token = create_mfa_challenge_token(
+        user_id=account.id,
+        secret_key=settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+    _set_challenge_cookie(response, token, settings)
+    response.status_code = status.HTTP_202_ACCEPTED
+    return MfaChallengeResponse(expires_in=MFA_CHALLENGE_EXPIRE_MINUTES * 60)
 
 
 @lru_cache
@@ -232,20 +320,29 @@ async def register(payload: RegisterRequest, session: SessionDep) -> UserCreated
 
 @router.post(
     "/login",
-    response_model=LoginResponse,
+    response_model=None,
+    responses={
+        200: {"model": LoginResponse},
+        202: {"model": MfaChallengeResponse},
+    },
     summary="Authenticate and receive session cookies",
     description=(
         "Verifies credentials server-side and issues the access JWT and the "
         "opaque refresh credential as HttpOnly; Secure; SameSite=Strict "
-        "cookies (Chapter 2, Section 9). No token material in the body."
+        "cookies (Chapter 2, Section 9). No token material in the body. "
+        "MFA-enabled accounts receive 202 + a short-lived challenge cookie "
+        "instead — no session is minted before the second factor."
     ),
 )
-async def login(payload: LoginRequest, session: SessionDep, response: Response) -> LoginResponse:
+async def login(payload: LoginRequest, session: SessionDep, response: Response) -> Any:
     service = UserService(session)
     settings = get_settings()
     # Unknown-email and wrong-password raise the identical InvalidCredentialsError
     # (401 UNAUTHENTICATED) — no user-enumeration oracle (Chapter 5, Section 2).
     account = await service.authenticate(payload.email, payload.password)
+    if account.mfa_enabled:
+        # Second factor outstanding: challenge only, never a session.
+        return _challenge_response(response, account, settings)
     _issue_session(response, session, account, settings)
     return LoginResponse(
         user=_to_user_info(account),
@@ -255,7 +352,11 @@ async def login(payload: LoginRequest, session: SessionDep, response: Response) 
 
 @router.post(
     "/firebase",
-    response_model=LoginResponse,
+    response_model=None,
+    responses={
+        200: {"model": LoginResponse},
+        202: {"model": MfaChallengeResponse},
+    },
     summary="Exchange a Firebase ID token for SentinelGPT session cookies",
     description=(
         "Verifies a Firebase ID token server-side (signature, audience, "
@@ -271,7 +372,7 @@ async def firebase_login(
     payload: FirebaseLoginRequest,
     session: SessionDep,
     response: Response,
-) -> LoginResponse:
+) -> Any:
     settings = get_settings()
     if not settings.firebase_project_id:
         raise FeatureDisabledError("Firebase sign-in is not configured on this deployment.")
@@ -281,6 +382,8 @@ async def firebase_login(
     account = await UserService(session).authenticate_firebase(
         identity, project_id=settings.firebase_project_id
     )
+    if account.mfa_enabled:
+        return _challenge_response(response, account, settings)
     _issue_session(response, session, account, settings)
     return LoginResponse(
         user=_to_user_info(account),
@@ -393,3 +496,149 @@ async def logout(
     refresh_service = RefreshService(session, settings.refresh_token_expire_days)
     await refresh_service.logout(_read_refresh_cookie(request))
     _clear_auth_cookies(response, settings)
+
+
+# --------------------------------------------------------------------- #
+# MFA (M11): additive second factor over the session architecture above  #
+# --------------------------------------------------------------------- #
+
+
+class EnrollMfaResponse(BaseModel):
+    """200 response: provisioning material, shown exactly once."""
+
+    provisioning_uri: str = Field(serialization_alias="provisioningUri")
+    secret: str = Field(description="Raw TOTP secret; shown once, never again")
+
+
+class VerifyMfaRequest(BaseModel):
+    """TOTP-or-recovery code body (1..32 chars)."""
+
+    code: str = Field(min_length=1, max_length=32)
+
+
+class RecoveryCodesResponse(BaseModel):
+    """Recovery codes, shown exactly once per generation."""
+
+    recovery_codes: list[str] = Field(serialization_alias="recoveryCodes")
+
+
+class MfaStatusResponse(BaseModel):
+    """Enrollment state (never any secret material)."""
+
+    enabled: bool
+
+
+class DisableMfaRequest(BaseModel):
+    """Password plus a second factor (TOTP or unused recovery code)."""
+
+    password: str = Field(min_length=1, max_length=128)
+    code: str = Field(min_length=1, max_length=32)
+
+
+def _read_challenge_cookie(request: Request) -> str | None:
+    return request.cookies.get(MFA_CHALLENGE_COOKIE)
+
+
+@router.post(
+    "/mfa/enroll",
+    response_model=EnrollMfaResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Begin MFA enrollment",
+)
+async def enroll_mfa(session: SessionDep, current_user: CurrentUser) -> EnrollMfaResponse:
+    """Stage an encrypted pending secret (inactive until verified).
+
+    Returns provisioning material exactly once; already-enabled
+    accounts get 409. Re-enrolling while pending replaces the secret.
+    """
+    started = await _mfa_service(session).begin_enrollment(current_user)
+    return EnrollMfaResponse(provisioning_uri=started.provisioning_uri, secret=started.secret)
+
+
+@router.post(
+    "/mfa/verify-enrollment",
+    response_model=RecoveryCodesResponse,
+    summary="Verify enrollment and activate MFA",
+)
+async def verify_mfa_enrollment(
+    payload: VerifyMfaRequest, session: SessionDep, current_user: CurrentUser
+) -> RecoveryCodesResponse:
+    """Activate MFA after a correct code; recovery codes shown once."""
+    issued = await _mfa_service(session).verify_enrollment(current_user, payload.code)
+    return RecoveryCodesResponse(recovery_codes=issued.codes)
+
+
+@router.get(
+    "/mfa/status",
+    response_model=MfaStatusResponse,
+    summary="Read MFA enrollment state",
+)
+async def mfa_status(session: SessionDep, current_user: CurrentUser) -> MfaStatusResponse:
+    """Enrollment state for the caller (never any secret material)."""
+    state = await _mfa_service(session).status(current_user)
+    return MfaStatusResponse(enabled=bool(state["enabled"]))
+
+
+@router.post(
+    "/mfa/verify",
+    response_model=LoginResponse,
+    summary="Complete the MFA challenge and receive session cookies",
+)
+async def verify_mfa_challenge(
+    payload: VerifyMfaRequest,
+    request: Request,
+    session: SessionDep,
+    response: Response,
+) -> LoginResponse:
+    """Consume the challenge cookie + TOTP/recovery code, then issue a session.
+
+    Accepts ONLY the short-lived challenge token — never a session
+    JWT. Malformed codes are 400; wrong codes are the identical 401
+    as login failures. Rate-limited per user against brute force.
+    """
+    from src.domain.users.token_service import decode_mfa_challenge_token
+
+    settings = get_settings()
+    user_id = decode_mfa_challenge_token(
+        _read_challenge_cookie(request) or "",
+        secret_key=settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+    account = await _mfa_service(session).verify_challenge(user_id, payload.code)
+    _clear_challenge_cookie(response, settings)
+    _issue_session(response, session, account, settings)
+    return LoginResponse(
+        user=_to_user_info(account),
+        expires_in=settings.access_token_expire_minutes * 60,
+    )
+
+
+@router.post(
+    "/mfa/disable",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Disable MFA with password + second factor",
+)
+async def disable_mfa(
+    payload: DisableMfaRequest, session: SessionDep, current_user: CurrentUser
+) -> None:
+    """Disable requires the current password AND a second factor.
+
+    A bare session hijack cannot strip MFA; a user who lost the
+    authenticator recovers with password + recovery code.
+    """
+    await _mfa_service(session).disable(current_user, password=payload.password, code=payload.code)
+
+
+@router.post(
+    "/mfa/recovery-codes/regenerate",
+    response_model=RecoveryCodesResponse,
+    summary="Replace all recovery codes",
+)
+async def regenerate_mfa_recovery_codes(
+    payload: VerifyMfaRequest, session: SessionDep, current_user: CurrentUser
+) -> RecoveryCodesResponse:
+    """Replace codes (authed session + current TOTP); new set shown once."""
+    issued = await _mfa_service(session).regenerate_recovery_codes(
+        current_user, totp_code=payload.code
+    )
+    return RecoveryCodesResponse(recovery_codes=issued.codes)

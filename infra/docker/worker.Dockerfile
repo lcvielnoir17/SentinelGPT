@@ -17,7 +17,13 @@
 #   binaries but no `docker` client CLI. The static release is ~70 MiB and
 #   contains only the CLI the sandbox orchestrator needs.
 # =============================================================================
-FROM sentinelgpt-api
+# Why a BASE_IMAGE build arg:
+#   Local compose builds against the sibling `sentinelgpt-api` image
+#   (default, unchanged). Cloud Build cannot see that local name, so the
+#   production build passes the Artifact Registry API image explicitly
+#   (see infra/worker/cloudbuild.yaml).
+ARG BASE_IMAGE=sentinelgpt-api
+FROM ${BASE_IMAGE}
 
 USER root
 

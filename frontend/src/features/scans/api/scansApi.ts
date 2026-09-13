@@ -33,6 +33,12 @@ export interface Scan {
   createdAt: string;
 }
 
+export interface FindingEvidenceItem {
+  id: string;
+  type: string;
+  content: string;
+}
+
 export interface Finding {
   id: string;
   title: string;
@@ -42,6 +48,7 @@ export interface Finding {
   location: string;
   recommendation: string;
   createdAt: string;
+  evidenceItems: FindingEvidenceItem[];
 }
 
 export interface Assessment {
@@ -131,6 +138,9 @@ export interface FindingCompareItem {
   id: string;
   fingerprint: string;
   title: string;
+  severity: string;
+  /** Set only for persistent findings whose severity changed between scans. */
+  previousSeverity: string | null;
 }
 
 export interface CompareResponse {

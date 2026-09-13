@@ -19,7 +19,6 @@ export interface UserAccount {
   id: string;
   email: string;
   mfaEnabled: boolean;
-  organizations: string[];
 }
 
 export interface LoginResponse {

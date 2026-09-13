@@ -55,3 +55,24 @@ class EmptyMessageError(DomainError):
     status_code = 400
     code = "VALIDATION_ERROR"
     message = "Message must not be empty."
+
+
+class InvalidComparisonAnchorError(DomainError):
+    """A comparison anchor must name both scans of the pair (400)."""
+
+    status_code = 400
+    code = "VALIDATION_ERROR"
+    message = "A scan comparison anchor requires both scan IDs."
+
+
+class ConversationStoreUnavailableError(DomainError):
+    """Conversation persistence failed (503 CONVERSATION_UNAVAILABLE).
+
+    Firestore (or its fallback) raised an unexpected error. Surfaced as a
+    controlled 503 — never a 500 — so the UI can offer a retry instead of
+    stranding the panel in a loading state.
+    """
+
+    status_code = 503
+    code = "CONVERSATION_UNAVAILABLE"
+    message = "Conversation storage is unavailable right now; try again shortly."

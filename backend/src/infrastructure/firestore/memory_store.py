@@ -51,7 +51,7 @@ class InMemoryConversationStore:
 
     async def append_message(
         self, firebase_uid: str, conversation_id: str, message: ConversationMessage
-    ) -> None:
+    ) -> ConversationMessage:
         conversation = await self.get_conversation(firebase_uid, conversation_id)
         if conversation is None:
             raise ConversationNotFoundError()
@@ -77,6 +77,7 @@ class InMemoryConversationStore:
             sequence=updated.message_count,
         )
         self._messages[firebase_uid][conversation_id][message.id] = sequenced
+        return sequenced
 
     async def list_messages(
         self, firebase_uid: str, conversation_id: str, *, limit: int = 200

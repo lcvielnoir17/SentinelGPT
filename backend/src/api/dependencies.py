@@ -65,6 +65,9 @@ async def get_current_user(request: Request, session: SessionDep) -> UserAccount
         email=user.email,
         created_at=user.created_at,
         firebase_uid=user.firebase_uid,
+        # getattr: unenrolled accounts predate the column default in
+        # older rows/doubles; missing means disabled (fail-closed).
+        mfa_enabled=bool(getattr(user, "mfa_enabled", False)),
     )
 
 

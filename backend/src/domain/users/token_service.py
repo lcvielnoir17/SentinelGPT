@@ -57,3 +57,53 @@ def decode_access_token(
         return uuid.UUID(str(claims["sub"]))
     except (ValueError, KeyError) as exc:
         raise NotAuthenticatedError() from exc
+
+
+MFA_CHALLENGE_AUDIENCE = "sgpt-mfa-challenge"
+MFA_CHALLENGE_EXPIRE_MINUTES = 5
+
+
+def create_mfa_challenge_token(
+    *,
+    user_id: uuid.UUID,
+    secret_key: str,
+    algorithm: str,
+    expires_in_minutes: int = MFA_CHALLENGE_EXPIRE_MINUTES,
+) -> str:
+    """Sign a short-lived MFA-challenge JWT (second-factor gate only).
+
+    The audience claim scopes the token to the challenge-verify
+    endpoint: it is never accepted as a session credential anywhere
+    else, so no half-authenticated token can be reused as a login.
+    """
+    now = datetime.now(UTC)
+    payload = {
+        "sub": str(user_id),
+        "aud": MFA_CHALLENGE_AUDIENCE,
+        "iat": now,
+        "exp": now + timedelta(minutes=expires_in_minutes),
+    }
+    return jwt.encode(payload, secret_key, algorithm=algorithm)
+
+
+def decode_mfa_challenge_token(
+    token: str,
+    *,
+    secret_key: str,
+    algorithm: str,
+) -> uuid.UUID:
+    """Verify a challenge token (signature, expiry, audience); else 401."""
+    try:
+        claims = jwt.decode(
+            token,
+            secret_key,
+            algorithms=[algorithm],
+            audience=MFA_CHALLENGE_AUDIENCE,
+            options={"require": ["sub", "exp", "aud"]},
+        )
+    except jwt.PyJWTError as exc:
+        raise NotAuthenticatedError() from exc
+    try:
+        return uuid.UUID(str(claims["sub"]))
+    except (ValueError, KeyError) as exc:
+        raise NotAuthenticatedError() from exc

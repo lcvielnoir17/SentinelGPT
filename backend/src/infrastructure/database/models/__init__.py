@@ -6,11 +6,8 @@ table and autogenerate stays complete.
 
 from src.infrastructure.database.models.audit_models import AuditLogEntry
 from src.infrastructure.database.models.base import Base
-from src.infrastructure.database.models.identity_models import (
-    Organization,
-    OrganizationMembership,
-    User,
-)
+from src.infrastructure.database.models.ci_models import CiCredential, CiScanRequest
+from src.infrastructure.database.models.identity_models import User
 from src.infrastructure.database.models.lookup_models import (
     AttestationMethod,
     FindingCategory,
@@ -21,24 +18,30 @@ from src.infrastructure.database.models.lookup_models import (
     ScanStatus,
     SeverityLevel,
 )
+from src.infrastructure.database.models.mfa_models import MfaRecoveryCode
 from src.infrastructure.database.models.refresh_session_models import RefreshSession
 from src.infrastructure.database.models.scan_models import (
     AuthorizationAttestation,
+    FindingEnrichment,
     FindingEvidence,
+    FindingRemediation,
     FindingStatusHistory,
+    RemediationComment,
     Scan,
     ScanAiAssessment,
     ScanEngineExecution,
     ScanFinding,
+    ScanSchedule,
 )
-from src.infrastructure.database.models.target_models import Target
+from src.infrastructure.database.models.target_models import Target, TargetTechnology
+from src.infrastructure.database.models.webhook_models import Webhook, WebhookDelivery
 
 __all__ = [
     "Base",
     "User",
-    "Organization",
-    "OrganizationMembership",
+    "MfaRecoveryCode",
     "Target",
+    "TargetTechnology",
     "RefreshSession",
     "SeverityLevel",
     "FindingCategory",
@@ -54,6 +57,14 @@ __all__ = [
     "ScanFinding",
     "FindingEvidence",
     "FindingStatusHistory",
+    "FindingEnrichment",
+    "FindingRemediation",
+    "RemediationComment",
     "ScanAiAssessment",
+    "ScanSchedule",
+    "Webhook",
+    "WebhookDelivery",
     "AuditLogEntry",
+    "CiCredential",
+    "CiScanRequest",
 ]

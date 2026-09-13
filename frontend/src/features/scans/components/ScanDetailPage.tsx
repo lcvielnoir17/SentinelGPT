@@ -170,7 +170,7 @@ export function ScanDetailPage() {
     }
   }
 
-  async function handleDownload(format: "json" | "csv") {
+  async function handleDownload(format: "json" | "csv" | "pdf") {
     setBusy(true);
     setError(null);
     try {
@@ -315,6 +315,9 @@ export function ScanDetailPage() {
             <button type="button" disabled={busy} onClick={() => handleDownload("csv")}>
               Download CSV
             </button>
+            <button type="button" disabled={busy} onClick={() => handleDownload("pdf")}>
+              Download PDF
+            </button>
           </div>
         </div>
       )}
@@ -411,6 +414,16 @@ export function ScanDetailPage() {
                   <details>
                     <summary>Evidence</summary>
                     <pre className="evidence">{f.evidence}</pre>
+                    {(f.evidenceItems ?? []).length > 0 && (
+                      <ul className="evidence-items">
+                        {(f.evidenceItems ?? []).map((item) => (
+                          <li key={item.id} className="evidence-item">
+                            <span className="mono small">[{item.type}]</span>
+                            <pre className="evidence">{item.content}</pre>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </details>
                   {f.recommendation && (
                     <p>
@@ -669,6 +682,10 @@ function CompareItemRow({ item }: { item: FindingCompareItem }) {
   return (
     <li className="compare-item">
       <span className="compare-item-title">{item.title}</span>
+      <span className={`pill severity-${item.severity.toLowerCase()}`}>{item.severity}</span>
+      {item.previousSeverity !== null && item.previousSeverity !== item.severity && (
+        <span className="muted small">was {item.previousSeverity}</span>
+      )}
       <span className="compare-item-meta mono small">
         fingerprint: {truncate(item.fingerprint, 16)} · id: {truncate(item.id, 8)}
       </span>

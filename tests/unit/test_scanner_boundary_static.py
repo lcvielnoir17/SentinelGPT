@@ -70,6 +70,16 @@ SANDBOX_ZONE_ALLOWED = frozenset(PROCESS_TOKENS) | {
     "import httpx",
     "from httpx",
 }
+# Container-side workload exception (reviewed): http_workload.py is not
+# host-side code — it is injected INTO the established sandbox and executed
+# there as the unprivileged workload UID. Its sockets therefore originate
+# inside the kernel-governed runtime (the OUTPUT chain allows only the
+# validated pinned destination), which is exactly the governed path this
+# guard protects. The allowance covers only raw-socket handshake
+# observation (TLS posture telemetry); HTTP clients stay forbidden even
+# here, and the host side never imports socket itself.
+WORKLOAD_SOCKET_FILE = "scanning/sandbox/http_workload.py"
+WORKLOAD_SOCKET_TOKENS = frozenset({"import socket", "socket.", "create_connection"})
 
 
 def _zone_for(relative_posix: str) -> str:
@@ -92,14 +102,43 @@ def _iter_source_files() -> list[pathlib.Path]:
     return sorted(SRC_ROOT.rglob("*.py"))
 
 
+def test_webhook_sender_exception_stays_narrow() -> None:
+    """The outbound sender keeps its reviewed allowance and nothing more.
+
+    The sender file may use an HTTP client (its purpose), but must not
+    gain raw sockets, DNS primitives, subprocesses, or Docker access —
+    and no other default-zone file may import an HTTP client at all
+    (enforced by the zone tests above).
+    """
+    sender = SRC_ROOT / WEBHOOK_SENDER_FILE
+    assert sender.is_file(), "webhook sender went missing; exception covers nothing"
+    text = sender.read_text(encoding="utf-8")
+    for token in (
+        "import socket",
+        "from socket",
+        "socket.",
+        "getaddrinfo",
+        "gethostbyname",
+        "subprocess",
+        "import docker",
+        "from docker",
+        "urlopen(",
+    ):
+        assert token not in text, f"webhook sender gained {token!r} beyond the allowance"
+
+
 def test_default_zone_is_network_and_process_inert() -> None:
     violations: list[str] = []
     for path in _iter_source_files():
-        zone = _zone_for(path.as_posix().replace("backend/src/", "", 1))
+        relative = path.as_posix().replace("backend/src/", "", 1)
+        zone = _zone_for(relative)
         if zone != "default":
             continue
         text = path.read_text(encoding="utf-8")
-        violations.extend(f"{path}: contains {token!r}" for token in _violations_for(text, zone))
+        for token in _violations_for(text, zone):
+            if relative == WEBHOOK_SENDER_FILE and token in WEBHOOK_SENDER_TOKENS:
+                continue
+            violations.append(f"{path}: contains {token!r}")
     assert not violations, "Default zone gained network/process capability:\n" + "\n".join(
         violations
     )
@@ -135,8 +174,26 @@ def test_sandbox_zone_has_no_direct_network_capability() -> None:
     violations: list[str] = []
     for path in sandbox_files:
         text = path.read_text(encoding="utf-8")
-        violations.extend(
-            f"{path}: contains {token!r}" for token in forbidden_here if token in text
+        relative = path.as_posix().replace("backend/src/", "", 1)
+        for token in forbidden_here:
+            if token in text and not (
+                relative == WORKLOAD_SOCKET_FILE and token in WORKLOAD_SOCKET_TOKENS
+            ):
+                violations.append(f"{path}: contains {token!r}")
+    # The workload exception must stay narrow: socket use outside the
+    # single container-side workload file is still a violation (covered
+    # above), and the workload file itself must not gain HTTP clients,
+    # subprocesses, or DNS primitives beyond the allowed handshake.
+    workload_paths = [
+        p
+        for p in sandbox_files
+        if p.as_posix().replace("backend/src/", "", 1) == WORKLOAD_SOCKET_FILE
+    ]
+    assert workload_paths, "container workload went missing; exception covers nothing"
+    workload_text = workload_paths[0].read_text(encoding="utf-8")
+    for token in ("getaddrinfo", "gethostbyname", "from socket", "subprocess", "urlopen("):
+        assert token not in workload_text, (
+            f"workload gained {token!r} beyond the reviewed allowance"
         )
     assert not violations, "Sandbox zone gained forbidden capability:\n" + "\n".join(violations)
 
@@ -154,6 +211,12 @@ ENGINE_ZONE_FORBIDDEN = tuple(
         "urllib.",
     }
 )
+# Outbound notification sender exception (reviewed): the single module
+# below is the only host-side code allowed to open HTTP connections, and
+# only to operator-configured, SSRF-validated https callback URLs with
+# redirects disabled and bounded timeouts. Scanner zones stay untouched.
+WEBHOOK_SENDER_FILE = "infrastructure/notifications/sender.py"
+WEBHOOK_SENDER_TOKENS = frozenset({"import httpx", "from httpx"})
 
 
 def test_engine_zone_consumes_only_approved_abstractions() -> None:

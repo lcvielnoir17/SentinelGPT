@@ -106,9 +106,18 @@ def execute_scan_job_task(
     The Celery task is the canonical worker entry point. It mirrors
     ``ScanService.build_background_job`` so the domain orchestration
     remains the single source of truth for the execution chain.
+
+    The execution gate is enforced here as well as at enqueue time: a task
+    that was queued while execution was enabled but runs after the
+    operator disabled it is REJECTED instead of executed, so the gate is a
+    true kill-switch (incident response, misconfigured worker).
     """
     logger.info("scan_job_task_started", scan_id=scan_id)
     scan_uuid = uuid.UUID(scan_id)
+    if not get_settings().scanner_execution_enabled:
+        logger.info("scan_job_task_skipped_execution_disabled", scan_id=scan_id)
+        asyncio.run(_mark_scan_rejected(scan_uuid, "execution_disabled"))
+        return {"scan_id": scan_id, "status": "rejected"}
     try:
         asyncio.run(_run_scan_job(scan_uuid))
     except (AttestationNotConfirmedError, ScannerExecutionBlockedError, TargetUnresolvedError):
@@ -126,12 +135,25 @@ def execute_scan_job_task(
 async def _run_scan_job(scan_id: uuid.UUID) -> None:
     """Open a fresh session, run the secure chain, commit per stage."""
     from src.domain.scans.scan_service import ScanService
+    from src.domain.webhooks.dispatch import fanout_events
     from src.infrastructure.ai.factory import maybe_evidence_analyzer
+    from src.infrastructure.database.repositories.scan_repository import ScanRepository
 
     sessionmaker = get_async_sessionmaker()
     async with sessionmaker() as session:
         service = ScanService(session, principal=None)
-        await service.execute_scan_job(scan_id, ai_analyzer=maybe_evidence_analyzer())
+        events = await service.execute_scan_job(scan_id, ai_analyzer=maybe_evidence_analyzer())
+        if events:
+            scan = await ScanRepository(session).get_by_id(scan_id)
+            if scan is not None:
+                delivery_ids = await fanout_events(session, scan.initiated_by_user_id, events)
+                await session.commit()
+                for delivery_id in delivery_ids:
+                    celery_app.send_task(
+                        "src.workers.webhook_tasks.deliver_webhook_task",
+                        kwargs={"delivery_id": str(delivery_id)},
+                        queue="scan",
+                    )
 
 
 async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:

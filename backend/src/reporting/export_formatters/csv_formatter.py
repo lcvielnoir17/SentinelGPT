@@ -15,7 +15,7 @@ import io
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.reporting.assembler import ReportDocument
+    from src.reporting.assembler import ReportDocument, ReportFinding
 
 
 CSV_COLUMNS: tuple[str, ...] = (
@@ -77,15 +77,14 @@ def _remediation_summary(finding_explanation: dict[str, object] | None) -> str:
     return " | ".join(pieces).replace("\n", " ").strip()
 
 
-def _lifecycle_status(fingerprint: str | None, lifecycle_counts: dict[str, int]) -> str:
-    """The lifecycle status is fingerprint-specific, not scan-wide.
+def _lifecycle_status(finding: ReportFinding) -> str:
+    """Per-finding lifecycle status from the canonical assembled document.
 
-    The lifecycle_counts dict is a scan-wide summary; the per-finding
-    status requires the per-fingerprint history. We default to an empty
-    string when the caller did not enrich the document.
+    The assembler resolves each finding's fingerprint against the target's
+    lifecycle history, so the CSV reports the same status the JSON export
+    and the PDF carry — never a scan-wide guess.
     """
-    del fingerprint, lifecycle_counts
-    return ""
+    return finding.lifecycle_status or ""
 
 
 def render_csv_report(document: ReportDocument) -> str:
@@ -112,9 +111,7 @@ def render_csv_report(document: ReportDocument) -> str:
                 "affected_asset": _neutralize_formula(finding.affected_asset or ""),
                 "source_engine": finding.source_engine_code or "",
                 "fingerprint": _neutralize_formula(finding.fingerprint or ""),
-                "lifecycle_status": _lifecycle_status(
-                    finding.fingerprint, document.lifecycle_counts
-                ),
+                "lifecycle_status": _lifecycle_status(finding),
                 "explanation_validation_status": (
                     str(finding.explanation.get("validation_status", ""))
                     if finding.explanation

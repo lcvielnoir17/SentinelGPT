@@ -34,6 +34,15 @@ export interface ApiRequestOptions {
   /** Extra request headers — used by `/auth/refresh` and `/auth/logout`
    * to set the required `X-Refresh-Request` CSRF header. */
   headers?: Record<string, string>;
+  /** Per-request timeout in milliseconds. When exceeded the request is
+   * aborted and an `ApiError` with code `TIMEOUT` (status 0) is thrown so
+   * callers can always leave a loading state and offer a retry. When
+   * omitted the request waits indefinitely (pre-existing behavior for
+   * callers that manage their own lifecycle). */
+  timeoutMs?: number;
+  /** Optional external abort signal (e.g. component unmount). An external
+   * abort surfaces as an `ApiError` with code `ABORTED` (status 0). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -107,6 +116,44 @@ async function doFetch(path: string, init: RequestInit): Promise<Response> {
   return response;
 }
 
+/**
+ * Combine a per-request timeout with an optional external abort signal
+ * into a single signal for fetch, reporting which side fired.
+ */
+function watchAbort(
+  timeoutMs: number | undefined,
+  externalSignal: AbortSignal | undefined,
+): { signal: AbortSignal | undefined; done: () => void; timedOut: () => boolean } {
+  if (timeoutMs === undefined && externalSignal === undefined) {
+    return { signal: undefined, done: () => {}, timedOut: () => false };
+  }
+  const controller = new AbortController();
+  let firedTimeout = false;
+  const onExternalAbort = (): void => controller.abort();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (externalSignal !== undefined) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
+  if (timeoutMs !== undefined) {
+    timer = setTimeout(() => {
+      firedTimeout = true;
+      controller.abort();
+    }, timeoutMs);
+  }
+  return {
+    signal: controller.signal,
+    done: () => {
+      if (timer !== undefined) clearTimeout(timer);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
+    },
+    timedOut: () => firedTimeout,
+  };
+}
+
 export async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {},
@@ -127,7 +174,32 @@ export async function apiRequest<T>(
     init.body = JSON.stringify(options.body);
   }
 
-  const response = await doFetch(path, init);
+  const abort = watchAbort(options.timeoutMs, options.signal);
+  if (abort.signal !== undefined) {
+    init.signal = abort.signal;
+  }
+  let response: Response;
+  try {
+    response = await doFetch(path, init);
+  } catch (err) {
+    abort.done();
+    if (abort.timedOut()) {
+      throw new ApiError(0, "TIMEOUT", "The request timed out; try again.", null);
+    }
+    if (options.signal?.aborted) {
+      throw new ApiError(0, "ABORTED", "The request was cancelled.", null);
+    }
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    throw new ApiError(
+      0,
+      "NETWORK_ERROR",
+      "Unable to reach the SentinelGPT API; check your connection and try again.",
+      null,
+    );
+  }
+  abort.done();
 
   if (response.status === 401) {
     notifyUnauthorized();

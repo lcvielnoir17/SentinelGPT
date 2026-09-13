@@ -73,6 +73,7 @@ function finding(partial: Partial<Finding> & { id: string }): Finding {
     location: "https://example.com/",
     recommendation: "Fix it.",
     createdAt: "2026-09-04T10:00:00Z",
+    evidenceItems: [],
     ...partial,
   };
 }

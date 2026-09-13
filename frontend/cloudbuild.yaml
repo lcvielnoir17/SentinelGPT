@@ -1,0 +1,53 @@
+# =============================================================================
+# SentinelGPT frontend — Cloud Build configuration (Ideathon requirement 5)
+#
+# `gcloud run deploy --source` cannot forward Docker build args, but the
+# Vite bundle bakes VITE_* values in AT BUILD TIME. This config builds the
+# frontend image with the public Firebase web configuration so the deployed
+# SPA ships with Firebase/Google sign-in enabled.
+#
+# Invoked by scripts/deploy-cloudrun.sh:
+#   gcloud builds submit frontend --config frontend/cloudbuild.yaml \
+#       --substitutions _REGION=...,_IMAGE=...,\
+#           _VITE_FIREBASE_API_KEY=...,_VITE_FIREBASE_PROJECT_ID=...,\
+#           _VITE_FIREBASE_APP_ID=... \
+#       --project "$PROJECT_ID"
+#
+# NOTE: the submitted SOURCE is `frontend/`, so every path below is relative
+# to the frontend directory (the build workspace root), NOT the repo root.
+#
+# The Firebase values are PUBLIC web configuration (see
+# frontend/.env.example): the web API key identifies the project but grants
+# no access. Never pass secrets (Gemini keys, JWT secrets, DB passwords)
+# through these substitutions — they would bake into the static bundle.
+# =============================================================================
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - '--build-arg'
+      - 'VITE_FIREBASE_API_KEY=${_VITE_FIREBASE_API_KEY}'
+      - '--build-arg'
+      - 'VITE_FIREBASE_PROJECT_ID=${_VITE_FIREBASE_PROJECT_ID}'
+      - '--build-arg'
+      - 'VITE_FIREBASE_APP_ID=${_VITE_FIREBASE_APP_ID}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/${_IMAGE}:latest'
+      - -f
+      - Dockerfile
+      - .
+    id: build-frontend
+
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/${_IMAGE}:latest'
+
+substitutions:
+  _REGION: europe-west1
+  _IMAGE: sentinelgpt-frontend
+  _VITE_FIREBASE_API_KEY: ''
+  _VITE_FIREBASE_PROJECT_ID: ''
+  _VITE_FIREBASE_APP_ID: ''
+
+options:
+  logging: CLOUD_LOGGING_ONLY

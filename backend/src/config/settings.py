@@ -91,6 +91,31 @@ class Settings(BaseSettings):
     )
     gemini_flash_lite_model: str = "gemini-2.0-flash-lite"
     gemini_flash_model: str = "gemini-2.0-flash"
+
+    # Webhook signing secrets (event notifications, local roadmap).
+    # Fernet-encoded 32-byte key used to encrypt per-webhook HMAC secrets
+    # at rest; empty disables webhook creation entirely (503, mirroring
+    # the Firebase bridge precedent — no silent insecure fallback).
+    webhook_secret_key: str = Field(
+        default="",
+        description="Fernet key encrypting webhook HMAC secrets; empty disables webhooks",
+    )
+    # MFA TOTP secrets (M11 authentication hardening).
+    # Fernet-encoded 32-byte key used to encrypt per-user TOTP secrets
+    # at rest; empty disables MFA enrollment and verification entirely
+    # (503, mirroring the webhook precedent — no silent insecure fallback).
+    mfa_secret_key: str = Field(
+        default="",
+        description="Fernet key encrypting MFA TOTP secrets; empty disables MFA",
+    )
+    mfa_verify_limit_per_minute: int = Field(
+        default=10,
+        description="Per-user window for MFA code verification attempts",
+    )
+    investigation_limit_per_minute: int = Field(
+        default=12,
+        description="Per-user window for AI investigation queries",
+    )
     # Phase 7 execution switch (ADR-0009): the composition root schedules
     # background scan jobs ONLY when this is true. Default OFF keeps the
     # scanner execution gate closed everywhere (dev, tests, first deploy).
@@ -160,6 +185,29 @@ class Settings(BaseSettings):
     conversation_rate_limit_per_minute: int = Field(
         default=12,
         description="Maximum assistant replies per user per minute (Redis-backed; 0 disables)",
+    )
+
+    # Scan-creation abuse protection (per-user; Redis atomic admission +
+    # database-backed active-scan caps enforced in ScanService).
+    scan_rate_limit_per_minute: int = Field(
+        default=10,
+        description="Maximum scan creations per user per minute (Redis-backed; 0 disables)",
+    )
+    scan_max_queued_per_user: int = Field(
+        default=5,
+        description="Maximum QUEUED scans per user; further creations answer 429",
+    )
+    scan_max_running_per_user: int = Field(
+        default=2,
+        description="Maximum RUNNING scans per user; matches the production worker concurrency",
+    )
+    conversation_agent_timeout_s: float = Field(
+        default=50.0,
+        description=(
+            "Upper bound for one Gemini analyst turn (outer timeout around the "
+            "SDK call, which carries its own shorter timeout). Exceeding it "
+            "yields a controlled 503 AI_UNAVAILABLE, never a hung request."
+        ),
     )
 
     # Security & Authentication (Invariants: HttpOnly; Secure; SameSite=Strict cookies)

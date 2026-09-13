@@ -10,6 +10,9 @@ class DomainError(Exception):
     status_code: int
     code: str
     message: str
+    # Optional Retry-After seconds, surfaced as a response header for
+    # rate/quota rejections so clients back off instead of polling.
+    retry_after: int | None = None
 
     def __init__(self, message: str | None = None) -> None:
         super().__init__(message or self.message)
@@ -50,9 +53,9 @@ class ForbiddenError(DomainError):
 class NotFoundError(DomainError):
     """Resource does not exist or is not visible to the requester (404).
 
-    Per SRS Chapter 5, Section 14, cross-tenant resources are reported as
+    Per SRS Chapter 5, Section 14, cross-owner resources are reported as
     NOT_FOUND (never FORBIDDEN) so the API leaks no information about other
-    organizations' data.
+    users' data.
     """
 
     status_code = 404
@@ -99,6 +102,19 @@ class InvalidAttestationError(DomainError):
     status_code = 400
     code = "VALIDATION_ERROR"
     message = "Invalid attestation parameters."
+
+
+class InvalidScheduleError(DomainError):
+    """Schedule parameters failed validation (400).
+
+    Covers unknown scan profiles and out-of-range cadences: a schedule
+    that could never tick usefully is rejected instead of persisted as
+    a dead row.
+    """
+
+    status_code = 400
+    code = "VALIDATION_ERROR"
+    message = "Invalid schedule parameters."
 
 
 class RefreshCsrfHeaderMissingError(DomainError):

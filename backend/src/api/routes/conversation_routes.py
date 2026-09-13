@@ -56,6 +56,8 @@ class CreateConversationRequest(BaseModel):
     title: str | None = Field(default=None, max_length=120)
     scan_id: uuid.UUID | None = Field(default=None, validation_alias="scanId")
     finding_id: str | None = Field(default=None, validation_alias="findingId", max_length=64)
+    compare_scan_a_id: uuid.UUID | None = Field(default=None, validation_alias="compareScanAId")
+    compare_scan_b_id: uuid.UUID | None = Field(default=None, validation_alias="compareScanBId")
 
 
 class ConversationResponse(BaseModel):
@@ -64,6 +66,8 @@ class ConversationResponse(BaseModel):
     user_id: uuid.UUID = Field(serialization_alias="userId")
     scan_id: uuid.UUID | None = Field(default=None, serialization_alias="scanId")
     finding_id: str | None = Field(default=None, serialization_alias="findingId")
+    compare_scan_a_id: uuid.UUID | None = Field(default=None, serialization_alias="compareScanAId")
+    compare_scan_b_id: uuid.UUID | None = Field(default=None, serialization_alias="compareScanBId")
     message_count: int = Field(serialization_alias="messageCount")
     created_at: datetime = Field(serialization_alias="createdAt")
     updated_at: datetime = Field(serialization_alias="updatedAt")
@@ -73,6 +77,7 @@ class MessageResponse(BaseModel):
     id: str
     role: str
     content: str
+    sequence: int | None = Field(default=None, serialization_alias="sequence")
     created_at: datetime = Field(serialization_alias="createdAt")
 
 
@@ -101,6 +106,8 @@ def _to_response(conversation: Conversation) -> ConversationResponse:
         user_id=conversation.user_id,
         scan_id=conversation.scan_id,
         finding_id=conversation.finding_id,
+        compare_scan_a_id=conversation.compare_scan_a_id,
+        compare_scan_b_id=conversation.compare_scan_b_id,
         message_count=conversation.message_count,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
@@ -112,6 +119,7 @@ def _to_message_response(message: ConversationMessage) -> MessageResponse:
         id=message.id,
         role=message.role,
         content=message.content,
+        sequence=message.sequence,
         created_at=message.created_at,
     )
 
@@ -131,6 +139,7 @@ def _service(
         max_message_chars=settings.conversation_max_message_chars,
         max_history_messages=settings.conversation_max_history_messages,
         max_context_chars=settings.conversation_max_context_chars,
+        agent_timeout_s=settings.conversation_agent_timeout_s,
     )
 
 
@@ -146,7 +155,7 @@ ServiceDep = Annotated[ConversationService, Depends(_service)]
     "",
     response_model=ConversationResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a conversation (optionally anchored to a scan/finding)",
+    summary="Create a conversation (optionally anchored to a scan/finding/comparison)",
     description=(
         "Conversations are Firestore-scoped by the verified Firebase UID: "
         "accounts that never used the Firebase bridge receive 503 "
@@ -162,6 +171,8 @@ async def create_conversation(
         title=payload.title if payload else None,
         scan_id=payload.scan_id if payload else None,
         finding_id=payload.finding_id if payload else None,
+        compare_scan_a_id=payload.compare_scan_a_id if payload else None,
+        compare_scan_b_id=payload.compare_scan_b_id if payload else None,
     )
     return _to_response(conversation)
 

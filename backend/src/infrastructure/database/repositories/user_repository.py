@@ -36,6 +36,21 @@ class UserRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def basic_by_ids(self, user_ids: list[uuid.UUID]) -> dict[str, dict[str, object]]:
+        """Display basics (id/email/active) for a batch of users, one query.
+
+        Backs assignee display without N+1 lookups. Keyed by string id.
+        """
+        if not user_ids:
+            return {}
+        rows = await self._session.execute(
+            select(User.id, User.email, User.is_active).where(User.id.in_(user_ids))
+        )
+        return {
+            str(uid): {"email": str(email), "is_active": bool(active)}
+            for uid, email, active in rows.all()
+        }
+
     async def get_by_firebase_uid(self, firebase_uid: str) -> User | None:
         """Fetch the account mapped to a verified Firebase UID (ADR-0010)."""
         stmt = select(User).where(User.firebase_uid == firebase_uid)

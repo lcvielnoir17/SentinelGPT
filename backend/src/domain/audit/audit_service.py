@@ -2,10 +2,8 @@
 
 Write path is INSERT-only by construction — the service exposes no update
 or delete, and the database trigger rejects them regardless. Read access
-follows the platform visibility rules: personal-tier entries are visible to
-their actor; organization-entity entries are visible to members of that
-organization's targets' owning organizations (v1: resolved through the
-entity's target ownership chain).
+follows the platform visibility rules: entries are visible to their actor
+or to the user recorded as owner in the entry metadata (fail-closed).
 """
 
 from __future__ import annotations
@@ -40,10 +38,30 @@ ACTION_ATTESTATION_REVOKED = "ATTESTATION_REVOKED"
 ACTION_SCAN_REQUESTED = "SCAN_REQUESTED"
 ACTION_SCAN_STATE_TRANSITION = "SCAN_STATE_TRANSITION"
 ACTION_AUDIT_LOG_ACCESSED = "AUDIT_LOG_ACCESSED"
-ACTION_ORGANIZATION_CREATED = "ORGANIZATION_CREATED"
-ACTION_MEMBER_ADDED = "MEMBER_ADDED"
-ACTION_MEMBER_ROLE_CHANGED = "MEMBER_ROLE_CHANGED"
-ACTION_MEMBER_REMOVED = "MEMBER_REMOVED"
+ACTION_SCHEDULE_CREATED = "SCHEDULE_CREATED"
+ACTION_SCHEDULE_UPDATED = "SCHEDULE_UPDATED"
+ACTION_SCHEDULE_DELETED = "SCHEDULE_DELETED"
+ACTION_SCHEDULE_RUN = "SCHEDULE_RUN"
+ACTION_REMEDIATION_UPDATED = "REMEDIATION_UPDATED"
+ACTION_REMEDIATION_ASSIGNED = "REMEDIATION_ASSIGNED"
+ACTION_REMEDIATION_REASSIGNED = "REMEDIATION_REASSIGNED"
+ACTION_REMEDIATION_DUE_DATE_CHANGED = "REMEDIATION_DUE_DATE_CHANGED"
+ACTION_REMEDIATION_COMMENT_ADDED = "REMEDIATION_COMMENT_ADDED"
+ACTION_REMEDIATION_VERIFY_REQUESTED = "REMEDIATION_VERIFY_REQUESTED"
+ACTION_CI_CREDENTIAL_CREATED = "CI_CREDENTIAL_CREATED"
+ACTION_CI_CREDENTIAL_ROTATED = "CI_CREDENTIAL_ROTATED"
+ACTION_CI_CREDENTIAL_REVOKED = "CI_CREDENTIAL_REVOKED"
+ACTION_CI_SCAN_REQUESTED = "CI_SCAN_REQUESTED"
+ACTION_CI_SCAN_REJECTED = "CI_SCAN_REJECTED"
+ACTION_MFA_ENROLL_STARTED = "MFA_ENROLL_STARTED"
+ACTION_MFA_ENABLED = "MFA_ENABLED"
+ACTION_MFA_DISABLED = "MFA_DISABLED"
+ACTION_MFA_CHALLENGE_SUCCESS = "MFA_CHALLENGE_SUCCESS"
+ACTION_MFA_CHALLENGE_FAILURE = "MFA_CHALLENGE_FAILURE"
+ACTION_MFA_RECOVERY_GENERATED = "MFA_RECOVERY_GENERATED"
+ACTION_MFA_RECOVERY_USED = "MFA_RECOVERY_USED"
+ACTION_MFA_RECOVERY_REGENERATED = "MFA_RECOVERY_REGENERATED"
+ACTION_MFA_SECRET_REPLACED = "MFA_SECRET_REPLACED"
 
 
 class AuditService:
@@ -93,10 +111,10 @@ class AuditService:
     ) -> list[AuditEntryDetails]:
         """Entries visible to the requester.
 
-        v1 scoping rule (fail-closed): a personal-tier account sees entries
-        whose actor is itself OR whose entity belongs to it via the target
-        ownership chain; organization-wide audit views arrive with org roles.
-        The AUDIT_LOG_ACCESSED meta-entry is recorded for every query.
+        v1 scoping rule (fail-closed): an account sees entries whose actor
+        is itself OR whose entity belongs to it via the target ownership
+        chain (``ownerUserId`` metadata). The AUDIT_LOG_ACCESSED meta-entry
+        is recorded for every query.
         """
         stmt = select(AuditLogEntry).order_by(AuditLogEntry.occurred_at.desc()).limit(limit)
         if entity_type is not None:
@@ -141,8 +159,7 @@ class AuditService:
     @staticmethod
     def _visible_to(row: AuditLogEntry, user_id: uuid.UUID) -> bool:
         # v1 fail-closed scope: own actions plus system events on entities
-        # whose metadata records this user as owner. Org-scope expansion is
-        # tracked with organization roles (Ch5 §3).
+        # whose metadata records this user as owner.
         if row.actor_user_id == user_id:
             return True
         owner = row.metadata_json.get("ownerUserId")

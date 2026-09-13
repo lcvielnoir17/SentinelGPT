@@ -68,9 +68,15 @@ class ControlledTransportError(Exception):
     payloads stay generic.
     """
 
-    def __init__(self, kind: TransportFailureKind, detail: str = "") -> None:
+    def __init__(
+        self, kind: TransportFailureKind, detail: str = "", tls: TlsConnectionInfo | None = None
+    ) -> None:
         self.kind = kind
         self.detail = detail
+        # Best-effort descriptive TLS state captured alongside the failure
+        # (e.g. the offending certificate when verification refused it).
+        # Advisory only: never trusted, never a bypass.
+        self.tls = tls
         super().__init__(f"{kind.value}: {detail}".rstrip(": "))
 
 
@@ -205,6 +211,84 @@ class HttpScanRequest:
 
 
 @dataclass(frozen=True)
+class TlsCertificateInfo:
+    """Descriptive public-certificate summary (never private material).
+
+    Captured by the sandbox workload from the handshake it already
+    performed — no new network capability. Subject/issuer are bounded
+    display strings; SANs are the validated name list.
+    """
+
+    subject: str = ""
+    issuer: str = ""
+    san: tuple[str, ...] = ()
+    not_before: str | None = None
+    not_after: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "subject": self.subject,
+            "issuer": self.issuer,
+            "san": list(self.san),
+            "not_before": self.not_before,
+            "not_after": self.not_after,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, object]) -> TlsCertificateInfo:
+        san = raw.get("san")
+        return cls(
+            subject=str(raw.get("subject") or ""),
+            issuer=str(raw.get("issuer") or ""),
+            san=tuple(str(s) for s in san) if isinstance(san, list) else (),
+            not_before=str(raw["not_before"]) if raw.get("not_before") is not None else None,
+            not_after=str(raw["not_after"]) if raw.get("not_after") is not None else None,
+        )
+
+
+@dataclass(frozen=True)
+class TlsConnectionInfo:
+    """Observed TLS handshake parameters for one https exchange.
+
+    ``verified`` records whether the transport's verification-ON handshake
+    accepted the chain. When False, ``verify_error`` carries the refusal
+    reason and ``certificate`` (when captured via a descriptive,
+    trust-nothing handshake) describes the offending certificate so the
+    engine can distinguish expired / mismatch / untrusted precisely.
+    """
+
+    version: str | None = None
+    cipher: str | None = None
+    cipher_bits: int | None = None
+    verified: bool = True
+    verify_error: str | None = None
+    certificate: TlsCertificateInfo | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "version": self.version,
+            "cipher": self.cipher,
+            "cipher_bits": self.cipher_bits,
+            "verified": self.verified,
+            "verify_error": self.verify_error,
+            "certificate": self.certificate.to_dict() if self.certificate else None,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, object]) -> TlsConnectionInfo:
+        cert = raw.get("certificate")
+        bits = raw.get("cipher_bits")
+        return cls(
+            version=str(raw["version"]) if raw.get("version") is not None else None,
+            cipher=str(raw["cipher"]) if raw.get("cipher") is not None else None,
+            cipher_bits=int(bits) if isinstance(bits, int) else None,
+            verified=bool(raw.get("verified", True)),
+            verify_error=str(raw["verify_error"]) if raw.get("verify_error") is not None else None,
+            certificate=TlsCertificateInfo.from_dict(cert) if isinstance(cert, dict) else None,
+        )
+
+
+@dataclass(frozen=True)
 class HttpResponseData:
     """Bounded response payload plus provenance for downstream analysis.
 
@@ -219,6 +303,9 @@ class HttpResponseData:
     final_target: ConnectionTarget
     via_redirects: tuple[str, ...] = ()
     truncated: bool = False
+    # Observed TLS state for https exchanges (None for http, or when the
+    # workload could not capture it — absence never fails the scan).
+    tls: TlsConnectionInfo | None = None
 
 
 @runtime_checkable

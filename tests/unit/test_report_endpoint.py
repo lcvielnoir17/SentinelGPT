@@ -148,7 +148,7 @@ def test_report_endpoint_returns_404_when_assembler_returns_none(
     assert response.status_code == 404
 
 
-def test_report_endpoint_rejects_unknown_format(
+def test_report_endpoint_returns_pdf_when_requested(
     client_with_user: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -156,6 +156,46 @@ def test_report_endpoint_rejects_unknown_format(
     _patch_get_scan(monkeypatch)
     scan_id = uuid.uuid4()
     response = client_with_user.get(f"/api/v1/scans/{scan_id}/report?format=pdf")
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.content.startswith(b"%PDF")
+    assert response.headers["content-disposition"].startswith("attachment;")
+    assert ".pdf" in response.headers["content-disposition"]
+
+
+def test_report_endpoint_rejects_unknown_format(
+    client_with_user: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_assembler(monkeypatch, _document())
+    _patch_get_scan(monkeypatch)
+    scan_id = uuid.uuid4()
+    response = client_with_user.get(f"/api/v1/scans/{scan_id}/report?format=docx")
     # FastAPI returns 422 (default) or 400 depending on path; either
     # way, the request MUST be rejected before the assembler runs.
     assert response.status_code in (400, 422)
+
+
+def test_report_endpoint_cross_tenant_is_404(
+    client_with_user: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tenant isolation: another owner's scan is 404 (never 403) for every
+    report format, so report/finding/evidence content cannot leak."""
+    from src.domain.errors import NotFoundError
+
+    async def _deny_scan(self: object, _scan_id: uuid.UUID) -> object:
+        raise NotFoundError()
+
+    monkeypatch.setattr(
+        "src.domain.scans.scan_service.ScanService.get_scan",
+        _deny_scan,
+    )
+    scan_id = uuid.uuid4()
+    for response in (
+        client_with_user.get(f"/api/v1/scans/{scan_id}/report"),
+        client_with_user.get(f"/api/v1/scans/{scan_id}/report?format=csv"),
+        client_with_user.get(f"/api/v1/scans/{scan_id}/report?format=pdf"),
+    ):
+        assert response.status_code == 404, response.text
+        assert response.json()["error"]["code"] == "NOT_FOUND"

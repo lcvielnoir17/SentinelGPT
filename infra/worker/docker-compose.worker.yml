@@ -1,0 +1,95 @@
+# =============================================================================
+# SentinelGPT — PRODUCTION WORKER STACK (runs on the worker GCE VM, NOT on
+# Cloud Run). Deployed by scripts/provision-worker-vm.sh, which also renders
+# the sibling .env.worker file (root-only, 0600) holding the secret values.
+#
+#   redis            Celery broker (db 1) + result backend (db 2) + API rate
+#                    limiter (db 0). Binds the VM's INTERNAL address only;
+#                    the GCP firewall admits 6379 solely from the Serverless
+#                    VPC Access connector range used by the Cloud Run API.
+#   cloud-sql-proxy  Cloud SQL Auth Proxy v2; the worker reaches PostgreSQL
+#                    through it (no public DB exposure, no keys on disk —
+#                    ADC comes from the VM service account).
+#   worker           Celery scan-queue worker with the docker CLI; drives
+#                    sibling sandbox containers via /var/run/docker.sock.
+#                    Prefork pool (Linux default); concurrency is capped via
+#                    WORKER_CONCURRENCY because each scan can boot sandbox
+#                    containers (task time limit 900s is enforced in code).
+# =============================================================================
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: sentinelgpt-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required (.env.worker)}
+      --appendonly yes
+      --bind 0.0.0.0
+      --protected-mode yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - sentinelgpt-worker
+
+  cloud-sql-proxy:
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.15.2
+    container_name: sentinelgpt-cloudsql-proxy
+    restart: unless-stopped
+    command: >
+      --address 0.0.0.0
+      --port 5432
+      --http-address 0.0.0.0
+      --http-port 9091
+      ${CLOUD_SQL_CONNECTION_NAME:?CLOUD_SQL_CONNECTION_NAME is required}
+    expose:
+      - "5432"
+    networks:
+      - sentinelgpt-worker
+
+  worker:
+    image: ${WORKER_IMAGE:?WORKER_IMAGE is required (.env.worker)}
+    container_name: sentinelgpt-worker
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_started
+      cloud-sql-proxy:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_JSON=true
+      - DATABASE_URL=postgresql+asyncpg://${DB_USER:?}:${DB_PASSWORD:?}@cloud-sql-proxy:5432/${DB_NAME:-sentinelgpt}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?}@redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?}@redis:6379/2
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required (.env.worker)}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_API_KEY_SECRET=${GEMINI_API_KEY_SECRET:-}
+      - SECRET_MANAGER_ENABLED=true
+      # Both tiers enforce the execution gate; the worker REJECTs (never
+      # executes) when this is anything but true (kill-switch semantics).
+      - SCANNER_EXECUTION_ENABLED=${SCANNER_EXECUTION_ENABLED:-true}
+      # Pin a digest in production (SCANNER_SANDBOX_IMAGE), never :latest.
+      - SCANNER_SANDBOX_IMAGE=${SCANNER_SANDBOX_IMAGE:?SCANNER_SANDBOX_IMAGE is required}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    command: >
+      python -m celery -A src.workers.celery_app:celery_app worker
+      --loglevel=INFO --queues=scan
+      --concurrency=${WORKER_CONCURRENCY:-2}
+      -n sgpt-worker@%h
+    networks:
+      - sentinelgpt-worker
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  sentinelgpt-worker:
+    driver: bridge

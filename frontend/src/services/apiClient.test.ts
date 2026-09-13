@@ -121,8 +121,7 @@ describe("apiRequest refresh", () => {
   });
 });
 
-describe("apiRequestRaw refresh", () => {
-  it("retries after refresh and notifies on surviving 401", async () => {
+describe("apiRequestRaw refresh", () => {  it("retries after refresh and notifies on surviving 401", async () => {
     const seen = new Set<string>();
     installFetch(async (url: unknown) => {
       const key = String(url);
@@ -145,5 +144,64 @@ describe("apiRequestRaw refresh", () => {
     const denied = await apiRequestRaw("/scans/y/report?format=csv");
     expect(denied.status).toBe(401);
     expect(notified).toHaveLength(1);
+  });
+});
+
+describe("apiRequest timeout and transport failures", () => {
+  it("throws a TIMEOUT ApiError when the request exceeds timeoutMs", async () => {
+    installFetch(async (_url: unknown, init: unknown) => {
+      const signal = (init as RequestInit).signal as AbortSignal | undefined;
+      expect(signal).toBeDefined();
+      // Hang until aborted, like a stalled backend.
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+      throw new Error("unreachable");
+    });
+
+    const err = await apiRequest("/conversations", { timeoutMs: 20 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("TIMEOUT");
+    expect((err as ApiError).status).toBe(0);
+  });
+
+  it("throws a NETWORK_ERROR ApiError when fetch itself fails", async () => {
+    installFetch(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+
+    const err = await apiRequest("/conversations").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("NETWORK_ERROR");
+  });
+
+  it("throws an ABORTED ApiError when the external signal fires", async () => {
+    installFetch(async (_url: unknown, init: unknown) => {
+      const signal = (init as RequestInit).signal as AbortSignal | undefined;
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+      throw new Error("unreachable");
+    });
+    const controller = new AbortController();
+
+    const pending = apiRequest("/conversations", { signal: controller.signal }).catch(
+      (e: unknown) => e,
+    );
+    controller.abort();
+    const err = await pending;
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("ABORTED");
+  });
+
+  it("passes through without a signal when no timeout or signal is given", async () => {
+    let seenSignal: unknown = "not-captured";
+    installFetch(async (_url: unknown, init: unknown) => {
+      seenSignal = (init as RequestInit).signal;
+      return jsonResponse({ ok: true }, 200);
+    });
+
+    await apiRequest("/targets");
+    expect(seenSignal).toBeUndefined();
   });
 });

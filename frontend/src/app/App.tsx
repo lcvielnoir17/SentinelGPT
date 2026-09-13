@@ -7,7 +7,6 @@
  *   /targets        → TargetsPage                — requires auth
  *   /scans          → ScansPage                  — requires auth
  *   /scans/:id      → ScanDetailPage             — requires auth
- *   /organizations  → OrganizationsPage          — requires auth
  *   /conversations  → ConversationsPage          — requires auth
  *   /audit-log      → AuditLogPage               — requires auth
  */
@@ -19,7 +18,6 @@ import { AuthPage } from "../features/auth/components/AuthPage";
 import { AuditLogPage } from "../features/audit/components/AuditLogPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { ConversationsPage } from "../features/conversations/components/ConversationsPage";
-import { OrganizationsPage } from "../features/organizations/components/OrganizationsPage";
 import { ScansPage } from "../features/scans/components/ScansPage";
 import { ScanDetailPage } from "../features/scans/components/ScanDetailPage";
 import { TargetsPage } from "../features/targets/components/TargetsPage";
@@ -47,7 +45,6 @@ export function App() {
         <Route path="/targets" element={<TargetsPage />} />
         <Route path="/scans" element={<ScansPage />} />
         <Route path="/scans/:scanId" element={<ScanDetailPage />} />
-        <Route path="/organizations" element={<OrganizationsPage />} />
         <Route path="/conversations" element={<ConversationsPage />} />
         <Route path="/audit-log" element={<AuditLogPage />} />
       </Route>

@@ -74,6 +74,65 @@ def test_enqueue_scan_no_op_when_execution_disabled(monkeypatch: object) -> None
         scan_tasks.celery_app = original_celery  # type: ignore[assignment]
 
 
+def test_scan_task_rejects_without_executing_when_gate_off(monkeypatch) -> None:
+    """The execution gate is a kill-switch: a task that reaches a worker
+    after the operator disabled execution is REJECTED, never run.
+
+    Covers tasks queued while the gate was on (or a misconfigured worker):
+    ``_run_scan_job`` must not execute and the scan is moved to REJECTED.
+    """
+    import src.workers.scan_tasks as scan_tasks
+
+    calls: list[str] = []
+
+    async def _must_not_run(scan_id: object) -> None:
+        calls.append("run")
+        raise AssertionError("_run_scan_job must not execute when the gate is off")
+
+    async def _record_reject(scan_id: object, reason: str) -> None:
+        calls.append(f"reject:{reason}")
+
+    monkeypatch.setattr(scan_tasks, "_run_scan_job", _must_not_run)
+    monkeypatch.setattr(scan_tasks, "_mark_scan_rejected", _record_reject)
+    settings = get_settings()
+    original = settings.scanner_execution_enabled
+    object.__setattr__(settings, "scanner_execution_enabled", False)
+    try:
+        result = execute_scan_job_task.run(str(uuid.uuid4()))
+    finally:
+        object.__setattr__(settings, "scanner_execution_enabled", original)
+
+    assert result == {"scan_id": result["scan_id"], "status": "rejected"}
+    assert calls == ["reject:execution_disabled"]
+
+
+def test_scan_task_executes_when_gate_on(monkeypatch) -> None:
+    """Gate on: the secure chain runs and the task reports completion."""
+    import src.workers.scan_tasks as scan_tasks
+
+    calls: list[str] = []
+
+    async def _record_run(scan_id: object) -> None:
+        calls.append("run")
+
+    async def _must_not_reject(scan_id: object, reason: str) -> None:
+        calls.append(f"reject:{reason}")
+        raise AssertionError("no rejection expected when the gate is on")
+
+    monkeypatch.setattr(scan_tasks, "_run_scan_job", _record_run)
+    monkeypatch.setattr(scan_tasks, "_mark_scan_rejected", _must_not_reject)
+    settings = get_settings()
+    original = settings.scanner_execution_enabled
+    object.__setattr__(settings, "scanner_execution_enabled", True)
+    try:
+        result = execute_scan_job_task.run(str(uuid.uuid4()))
+    finally:
+        object.__setattr__(settings, "scanner_execution_enabled", original)
+
+    assert result["status"] == "completed"
+    assert calls == ["run"]
+
+
 def test_enqueue_scan_returns_task_id_when_enabled() -> None:
     """With the gate on, a task id is returned without touching the broker.
 

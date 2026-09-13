@@ -8,8 +8,8 @@ present in the corresponding Pydantic model — so a backend rename or
 removal breaks the test instead of silently breaking the UI.
 
 Concretely: the dashboard reads
-  TargetResponse.{id, hostname, url, ownerOrganizationId, ownerUserId,
-                  isArchived, createdAt, status}
+  TargetResponse.{id, hostname, url, ownerUserId,
+                   isArchived, createdAt, status}
   ScanResponse.{id, targetId, scanProfile, status, initiatedBy,
                 authorizationAttestationId, queuedAt, startedAt,
                 completedAt, createdAt}
@@ -40,7 +40,6 @@ REQUIRED_TARGET_FIELDS = {
     "id",
     "hostname",
     "url",
-    "ownerOrganizationId",
     "ownerUserId",
     "isArchived",
     "createdAt",
@@ -171,6 +170,9 @@ def test_dashboard_endpoints_registered_in_router() -> None:
         ("GET", "/api/v1/scans/{scan_id}/findings/{finding_id}/explanation"),
         ("GET", "/api/v1/scans/{scan_id}/assessment"),
         ("GET", "/api/v1/scans/{scan_id}/report"),
+        ("GET", "/api/v1/dashboard/posture"),
+        ("GET", "/api/v1/dashboard/trends"),
+        ("GET", "/api/v1/dashboard/targets"),
     }
 
     def _walk(router: object, prefix: str) -> set[tuple[str, str]]:

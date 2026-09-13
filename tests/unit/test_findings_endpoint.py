@@ -35,6 +35,27 @@ from fastapi.testclient import TestClient
 from src.api.routes.scan_routes import FindingResponse
 from src.domain.scanning.findings import Confidence, Finding, Severity
 
+TARGET_ID = uuid.uuid4()
+
+
+def _visible_scan() -> object:
+    """Tenant gate passes; the scan belongs to a target (as in production)."""
+    return type("S", (), {"id": uuid.uuid4(), "target_id": TARGET_ID})()
+
+
+def _patch_remediation_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No workflow rows: remediation filters match nothing, unfiltered lists pass through."""
+
+    async def _no_remediation(_self: object, **kwargs: object) -> dict[str, dict[str, object]]:  # noqa: ARG001
+        return {}
+
+    monkeypatch.setattr(
+        "src.infrastructure.database.repositories.scan_repository."
+        "ScanEngineExecutionRepository.list_remediations_for_target",
+        _no_remediation,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Shared fake-row for the scan_engine_execution DTO returned by the repo      #
 # --------------------------------------------------------------------------- #
@@ -100,7 +121,7 @@ def test_findings_endpoint_returns_empty_list_for_queued_scan(
 
     async def _get_scan(_self: object, _sid: uuid.UUID) -> object:  # noqa: ARG001
         # Visible to the principal — tenant-isolation gate passes.
-        return object()
+        return _visible_scan()
 
     async def _list_finding_dtos(_self: object, _sid: uuid.UUID) -> list[dict[str, object]]:  # noqa: ARG001
         # Real DB: no scan_engine_execution rows for this scan, so the
@@ -116,6 +137,7 @@ def test_findings_endpoint_returns_empty_list_for_queued_scan(
         "ScanEngineExecutionRepository.list_finding_dtos",
         _list_finding_dtos,
     )
+    _patch_remediation_empty(monkeypatch)
 
     response = client.get(f"/api/v1/scans/{scan_id}/findings")
     assert response.status_code == 200, response.text
@@ -136,7 +158,7 @@ def test_findings_endpoint_returns_empty_list_for_rejected_scan(
     scan_id = uuid.uuid4()
 
     async def _get_scan(_self: object, _sid: uuid.UUID) -> object:  # noqa: ARG001
-        return object()
+        return _visible_scan()
 
     async def _list_finding_dtos(_self: object, _sid: uuid.UUID) -> list[dict[str, object]]:  # noqa: ARG001
         return []
@@ -150,6 +172,7 @@ def test_findings_endpoint_returns_empty_list_for_rejected_scan(
         "ScanEngineExecutionRepository.list_finding_dtos",
         _list_finding_dtos,
     )
+    _patch_remediation_empty(monkeypatch)
 
     response = client.get(f"/api/v1/scans/{scan_id}/findings")
     assert response.status_code == 200, response.text
@@ -177,10 +200,18 @@ def test_findings_endpoint_returns_persisted_findings_after_successful_run(
     ]
 
     async def _get_scan(_self: object, _sid: uuid.UUID) -> object:  # noqa: ARG001
-        return object()
+        return _visible_scan()
 
     async def _list_finding_dtos(_self: object, _sid: uuid.UUID) -> list[dict[str, object]]:  # noqa: ARG001
         return expected
+
+    async def _list_evidence(_self: object, _ids: list[str]) -> dict[str, list[dict[str, str]]]:  # noqa: ARG001
+        first_id = str(expected[0]["id"])
+        return {
+            first_id: [
+                {"id": "ev-1", "type": "header", "content": "content-security-policy: (missing)"}
+            ]
+        }
 
     monkeypatch.setattr(
         "src.domain.scans.scan_service.ScanService.get_scan",
@@ -191,6 +222,12 @@ def test_findings_endpoint_returns_persisted_findings_after_successful_run(
         "ScanEngineExecutionRepository.list_finding_dtos",
         _list_finding_dtos,
     )
+    monkeypatch.setattr(
+        "src.infrastructure.database.repositories.scan_repository."
+        "ScanEngineExecutionRepository.list_evidence_for_findings",
+        _list_evidence,
+    )
+    _patch_remediation_empty(monkeypatch)
 
     response = client.get(f"/api/v1/scans/{scan_id}/findings")
     assert response.status_code == 200, response.text
@@ -208,7 +245,12 @@ def test_findings_endpoint_returns_persisted_findings_after_successful_run(
             "recommendation",
             "severity",
             "createdAt",
+            "evidenceItems",
         }
+    assert body[0]["evidenceItems"] == [
+        {"id": "ev-1", "type": "header", "content": "content-security-policy: (missing)"}
+    ]
+    assert body[1]["evidenceItems"] == []
 
 
 def test_finding_response_accepts_real_engine_finding() -> None:

@@ -147,3 +147,48 @@ def build_context_block(context: FindingContext, *, max_field_chars: int) -> str
         + "\n\n"
         + frame_untrusted(untrusted, max_chars=max_field_chars)
     )
+
+
+@dataclass(frozen=True)
+class ComparisonBrief:
+    """Deterministic scan-pair summary for anchored conversations.
+
+    Counts and identifiers are system-derived (trusted); finding titles
+    are target-derived (untrusted) and framed accordingly at render.
+    """
+
+    scan_a_id: str
+    scan_b_id: str
+    new_count: int = 0
+    persistent_count: int = 0
+    resolved_count: int = 0
+    regressed_count: int = 0
+    severity_changed: tuple[str, ...] = ()
+    regressions: tuple[str, ...] = ()
+
+
+def build_comparison_context_block(brief: ComparisonBrief, *, max_field_chars: int) -> str:
+    """Render a scan-comparison anchor as trusted counts + framed titles.
+
+    Severity/priority transitions are narrated by the agent from these
+    counts; per-record detail stays behind the analysis endpoint so chat
+    context stays bounded.
+    """
+    parts = [
+        f"scan_a_id: {brief.scan_a_id}",
+        f"scan_b_id: {brief.scan_b_id}",
+        f"new: {brief.new_count}",
+        f"persistent: {brief.persistent_count}",
+        f"resolved: {brief.resolved_count}",
+        f"regressed: {brief.regressed_count}",
+    ]
+    untrusted_sections = []
+    if brief.severity_changed:
+        untrusted_sections.append("severity changed:\n" + "\n".join(brief.severity_changed))
+    if brief.regressions:
+        untrusted_sections.append("regressed:\n" + "\n".join(brief.regressions))
+    untrusted = "\n\n".join(s for s in untrusted_sections if s.strip())
+    block = "SCAN COMPARISON (trusted counts)\n" + "\n".join(parts)
+    if untrusted.strip():
+        block += "\n\n" + frame_untrusted(untrusted, max_chars=max_field_chars)
+    return block

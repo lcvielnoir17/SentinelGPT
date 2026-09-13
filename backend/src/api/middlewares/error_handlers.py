@@ -72,11 +72,15 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(DomainError)
     async def handle_domain_error(request: Request, exc: DomainError) -> JSONResponse:
+        headers = None
+        if exc.retry_after is not None:
+            headers = {"Retry-After": str(exc.retry_after)}
         return _error_response(
             request,
             status_code=exc.status_code,
             code=exc.code,
             message=exc.message,
+            headers=headers,
         )
 
     @app.exception_handler(RequestValidationError)

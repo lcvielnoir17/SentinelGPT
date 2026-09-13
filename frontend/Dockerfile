@@ -7,6 +7,18 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
+# Firebase Web SDK configuration (public web config, NOT secrets).
+# Vite bakes VITE_* values into the bundle at BUILD time, so Cloud Run
+# runtime env vars cannot reach them — they must arrive as Docker build
+# args. Empty defaults preserve the safe degraded mode (email/password
+# only, Firebase sign-in hidden) for local development.
+ARG VITE_FIREBASE_API_KEY=""
+ARG VITE_FIREBASE_PROJECT_ID=""
+ARG VITE_FIREBASE_APP_ID=""
+ENV VITE_FIREBASE_API_KEY=${VITE_FIREBASE_API_KEY} \
+    VITE_FIREBASE_PROJECT_ID=${VITE_FIREBASE_PROJECT_ID} \
+    VITE_FIREBASE_APP_ID=${VITE_FIREBASE_APP_ID}
+
 COPY package.json package-lock.json ./
 # npm ci = reproducible install strictly from package-lock.json
 RUN npm ci

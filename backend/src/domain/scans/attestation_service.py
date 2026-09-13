@@ -23,9 +23,6 @@ from src.infrastructure.database.repositories.attestation_repository import (
     REVOKED,
     AttestationRepository,
 )
-from src.infrastructure.database.repositories.membership_repository import (
-    MembershipRepository,
-)
 from src.infrastructure.database.repositories.target_repository import TargetRepository
 
 if TYPE_CHECKING:
@@ -70,7 +67,6 @@ class AttestationService:
         self._session = session
         self._attestations = AttestationRepository(session)
         self._targets = TargetRepository(session)
-        self._memberships = MembershipRepository(session)
         from src.domain.audit.audit_service import AuditService
 
         self._audit = AuditService(session)
@@ -112,9 +108,6 @@ class AttestationService:
                 "method": self.SELF_ATTESTATION_CODE,
                 "targetId": str(target_id),
                 "targetOwnerUserId": str(getattr(target, "owner_user_id", "") or ""),
-                "targetOwnerOrganizationId": str(
-                    getattr(target, "owner_organization_id", "") or ""
-                ),
                 "ownerUserId": str(self._principal.id),
                 "expiresAt": expires_at.isoformat() if expires_at else None,
             },
@@ -172,10 +165,6 @@ class AttestationService:
         if target is None:
             raise NotFoundError()
         if target.owner_user_id == self._principal.id:
-            return target
-        if target.owner_organization_id is not None and (
-            await self._memberships.is_member(self._principal.id, target.owner_organization_id)
-        ):
             return target
         raise NotFoundError()
 

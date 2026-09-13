@@ -26,6 +26,50 @@ if TYPE_CHECKING:
 REPORT_SCHEMA_VERSION = "sgpt.report.v1"
 
 
+def _priority_for(
+    severity: str,
+    lifecycle_status: str | None,
+    enrichment_rows: list[dict[str, object]] | None = None,
+    technologies: tuple[str, ...] | list[str] = (),
+) -> ReportPriority:
+    """Snapshot the deterministic v2 priority for one assembled finding.
+
+    CVE/CVSS signals activate only when enrichment rows exist; technology
+    relevance fires only for detected slugs paired with CVE/CVSS
+    enrichment evidence. Previous severity is unavailable at report scope
+    (no occurrence load by design), so the severity-change modifier rests
+    here and lives in comparison, where both sides are present.
+    """
+    from src.domain.scans.priority import (
+        PriorityInputsV2,
+        calculate_priority_v2,
+        match_technologies,
+    )
+
+    rows = enrichment_rows or []
+    has_cve = any(r.get("cve_id") for r in rows)
+    scores = [
+        float(score) for r in rows if isinstance((score := r.get("cvss_score")), (int, float))
+    ]
+    matched = match_technologies(tuple(technologies), rows)
+    result = calculate_priority_v2(
+        PriorityInputsV2(
+            severity=severity,
+            lifecycle_status=lifecycle_status,
+            has_cve=has_cve,
+            cvss_score=max(scores) if scores else None,
+            technologies=tuple(technologies),
+            matched_technologies=matched,
+        )
+    )
+    return ReportPriority(
+        score=result.score,
+        level=result.level,
+        version=result.version,
+        factors=result.factors,
+    )
+
+
 @dataclass(frozen=True)
 class ReportScanMetadata:
     target_hostname: str
@@ -50,6 +94,24 @@ class ReportEngineSummary:
 
 
 @dataclass(frozen=True)
+class ReportPriority:
+    """Deterministic contextual priority snapshot for one finding."""
+
+    score: int
+    level: str
+    version: str
+    factors: tuple[str, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "score": self.score,
+            "level": self.level,
+            "version": self.version,
+            "factors": list(self.factors),
+        }
+
+
+@dataclass(frozen=True)
 class ReportFinding:
     id: uuid.UUID
     severity: str
@@ -64,6 +126,12 @@ class ReportFinding:
     source_engine_code: str | None
     evidence_rows: tuple[dict[str, object], ...] = field(default=())
     explanation: dict[str, object] | None = None
+    # Latest lifecycle status for this finding's fingerprint on the scanned
+    # target (None when the fingerprint is absent or has no history yet).
+    lifecycle_status: str | None = None
+    # Deterministic priority snapshot (severity + lifecycle + enrichment
+    # signals when rows exist; see _priority_for).
+    priority: ReportPriority | None = None
 
 
 @dataclass(frozen=True)
@@ -136,6 +204,8 @@ class ReportDocument:
                     "fingerprint": f.fingerprint,
                     "affected_asset": f.affected_asset,
                     "source_engine_code": f.source_engine_code,
+                    "lifecycle_status": f.lifecycle_status,
+                    "priority": f.priority.to_dict() if f.priority is not None else None,
                     "evidence_rows": list(f.evidence_rows),
                     "explanation": f.explanation,
                 }
@@ -188,7 +258,37 @@ class ReportAssembler:
         findings = await self._findings(scan_id)
         assessment = await self._assessment(scan_id)
         fingerprints = [f.fingerprint for f in findings]
-        lifecycle_counts = await self._lifecycle_counts(scan.target_id, fingerprints)
+        latest_lifecycle = await self._latest_lifecycle_by_fp(scan.target_id, fingerprints)
+        enrichment = await self._enrichment_by_fp(scan.target_id, fingerprints)
+        technologies = await self._technologies_for_target(scan.target_id)
+        findings = tuple(
+            ReportFinding(
+                id=f.id,
+                severity=f.severity,
+                category=f.category,
+                title=f.title,
+                description=f.description,
+                evidence=f.evidence,
+                location=f.location,
+                recommendation=f.recommendation,
+                fingerprint=f.fingerprint,
+                affected_asset=f.affected_asset,
+                source_engine_code=f.source_engine_code,
+                evidence_rows=f.evidence_rows,
+                explanation=f.explanation,
+                lifecycle_status=latest_lifecycle.get(f.fingerprint) if f.fingerprint else None,
+                priority=_priority_for(
+                    f.severity,
+                    latest_lifecycle.get(f.fingerprint) if f.fingerprint else None,
+                    enrichment.get(f.fingerprint) if f.fingerprint else None,
+                    technologies,
+                ),
+            )
+            for f in findings
+        )
+        lifecycle_counts: dict[str, int] = {}
+        for code in latest_lifecycle.values():
+            lifecycle_counts[code] = lifecycle_counts.get(code, 0) + 1
 
         severity_counts: dict[str, int] = {}
         for f in findings:
@@ -406,11 +506,39 @@ class ReportAssembler:
             payload=payload,
         )
 
-    async def _lifecycle_counts(
+    async def _enrichment_by_fp(
         self,
         target_id: uuid.UUID,
         fingerprints: list[str | None],
-    ) -> dict[str, int]:
+    ) -> dict[str, list[dict[str, object]]]:
+        """Batched enrichment keyed by fingerprint (single query per report)."""
+        from src.infrastructure.database.repositories.scan_repository import (
+            ScanEngineExecutionRepository,
+        )
+
+        return await ScanEngineExecutionRepository(self._session).list_enrichment_for_fingerprints(
+            fingerprints=[fp for fp in fingerprints if fp], target_id=target_id
+        )
+
+    async def _technologies_for_target(self, target_id: uuid.UUID) -> tuple[str, ...]:
+        """Detected technology slugs for one target (single query per report)."""
+        from src.infrastructure.database.repositories.target_repository import (
+            TargetRepository,
+        )
+
+        rows = await TargetRepository(self._session).list_technologies(target_id)
+        return tuple(str(row["slug"]) for row in rows if row.get("slug"))
+
+    async def _latest_lifecycle_by_fp(
+        self,
+        target_id: uuid.UUID,
+        fingerprints: list[str | None],
+    ) -> dict[str, str]:
+        """Latest lifecycle status per fingerprint on one target.
+
+        Single query; backs both the per-finding status and the scan-wide
+        counts so the two can never disagree.
+        """
         from sqlalchemy import select
 
         from src.infrastructure.database.models import (
@@ -441,10 +569,7 @@ class ReportAssembler:
             if fp in latest:
                 continue
             latest[fp] = id_to_code.get(int(sid), "")
-        counts: dict[str, int] = {}
-        for code in latest.values():
-            counts[code] = counts.get(code, 0) + 1
-        return counts
+        return latest
 
 
 __all__ = [
@@ -454,5 +579,6 @@ __all__ = [
     "ReportDocument",
     "ReportEngineSummary",
     "ReportFinding",
+    "ReportPriority",
     "ReportScanMetadata",
 ]

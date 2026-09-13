@@ -66,6 +66,11 @@ class Conversation:
     title: str
     scan_id: uuid.UUID | None = None
     finding_id: str | None = None
+    # Optional scan-pair anchor for comparison questions ("what changed
+    # between these scans?"). Both ids are always set together; the brief
+    # is rebuilt deterministically per turn, never persisted.
+    compare_scan_a_id: uuid.UUID | None = None
+    compare_scan_b_id: uuid.UUID | None = None
     message_count: int = 0
     created_at: datetime = field(default_factory=_utc_now)
     updated_at: datetime = field(default_factory=_utc_now)

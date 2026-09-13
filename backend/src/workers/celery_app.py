@@ -103,6 +103,8 @@ def _build_celery() -> Celery:
         backend=settings.celery_result_backend,
         include=[
             "src.workers.scan_tasks",
+            "src.workers.schedule_tasks",
+            "src.workers.webhook_tasks",
         ],
     )
     app.conf.update(
@@ -121,6 +123,18 @@ def _build_celery() -> Celery:
         task_routes={
             "src.workers.scan_tasks.execute_scan_job_task": {
                 "queue": CELERY_QUEUE_SCAN,
+            },
+            "src.workers.schedule_tasks.run_due_schedules_task": {
+                "queue": CELERY_QUEUE_SCAN,
+            },
+        },
+        # Scheduler ticks need no new infrastructure: any operator running
+        # ``celery -A src.workers.celery_app beat`` automatically claims due
+        # schedule ticks every 60s through the normal scan-creation path.
+        beat_schedule={
+            "run-due-schedules-every-minute": {
+                "task": "src.workers.schedule_tasks.run_due_schedules_task",
+                "schedule": 60.0,
             },
         },
         task_time_limit=900,

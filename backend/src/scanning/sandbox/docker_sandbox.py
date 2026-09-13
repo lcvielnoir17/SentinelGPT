@@ -77,6 +77,12 @@ class DockerSandboxConfig:
     # test fixture's seeded-target network). Egress remains constrained by
     # the OUTPUT chain on every attached interface.
     extra_networks: tuple[str, ...] = ()
+    # Host resource caps for the sandbox container (Phase 14 hardening): a
+    # compromised or pathological workload must not exhaust the worker host.
+    # None disables the corresponding flag (tests); production always sets
+    # both via these secure defaults.
+    memory: str | None = "512m"
+    cpus: str | None = "1.0"
     # Unit tests inject a fake runner and disable host binary probing.
     check_docker_binary: bool = True
 
@@ -270,22 +276,28 @@ class DockerEgressSandbox:
         assert self._network is not None
         name = f"{self._config.resource_prefix}-{uuid.uuid4().hex[:12]}"
         self._pending_container = name
-        result = self._docker_with_timeout(
-            self._config.create_timeout_s,
-            [
-                "run",
-                "-d",
-                "--name",
-                name,
-                "--network",
-                self._network,
-                "--cap-add",
-                "NET_ADMIN",
-                self._config.image,
-                "sleep",
-                "infinity",
-            ],
-        )
+        # Resource caps ride the same create call as the NET_ADMIN grant:
+        # least privilege applies to host resources as well as network.
+        create_argv = [
+            "run",
+            "-d",
+            "--name",
+            name,
+            "--network",
+            self._network,
+            "--cap-add",
+            "NET_ADMIN",
+        ]
+        if self._config.memory is not None:
+            create_argv += ["--memory", self._config.memory]
+        if self._config.cpus is not None:
+            create_argv += ["--cpus", self._config.cpus]
+        create_argv += [
+            self._config.image,
+            "sleep",
+            "infinity",
+        ]
+        result = self._docker_with_timeout(self._config.create_timeout_s, create_argv)
         if result.returncode != 0:
             self.destroy()
             raise SandboxSetupFailedError(f"container start failed: {result.stderr.strip()}")

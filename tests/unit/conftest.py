@@ -2,7 +2,7 @@
 
 The ``env`` fixture in particular builds a complete in-memory fake of
 the scan-aggregate dependencies (ScanRepository, ScanEngineExecution-
-Repository, TargetRepository, AttestationRepository, MembershipRepository,
+Repository, TargetRepository, AttestationRepository,
 plus a FakeSession whose ``.get()`` is wired to the in-memory row stores
 so the production ``_resolve_finding_identity`` path can locate
 just-created rows). It is the canonical harness for the service-level
@@ -20,9 +20,6 @@ import pytest
 
 from src.infrastructure.database.repositories.attestation_repository import (
     AttestationRepository,
-)
-from src.infrastructure.database.repositories.membership_repository import (
-    MembershipRepository,
 )
 from src.infrastructure.database.repositories.target_repository import TargetRepository
 
@@ -174,6 +171,25 @@ class FakeRepo:
     async def status_ids_by_code(self) -> dict[str, int]:
         return dict(STATUS_IDS)
 
+    async def lock_owner(self, user_id: uuid.UUID) -> None:  # noqa: ARG002 - no-op double
+        """Creation-serialization hook: the fake is single-threaded."""
+        self.lock_calls = getattr(self, "lock_calls", 0) + 1
+
+    async def count_active_for_user(self, user_id: uuid.UUID) -> dict[str, int]:
+        # Mirrors production (join on status_id, not the denormalized code):
+        # real ORM rows carry status_id only.
+        active_ids = {STATUS_IDS["QUEUED"], STATUS_IDS["RUNNING"]}
+        id_to_code = {i: c for c, i in STATUS_IDS.items()}
+        counts: dict[str, int] = {}
+        for row in self.rows.values():
+            if getattr(row, "initiated_by_user_id", None) != user_id:
+                continue
+            sid = getattr(row, "status_id", None)
+            if sid in active_ids:
+                code = id_to_code[sid]
+                counts[code] = counts.get(code, 0) + 1
+        return counts
+
     async def status_code_by_id(self) -> dict[int, str]:
         return {i: c for c, i in STATUS_IDS.items()}
 
@@ -245,7 +261,6 @@ def env(mocker):  # type: ignore[no-untyped-def]
             "hostname": "seeded.example",
             "normalized_url": "https://seeded.example/",
             "owner_user_id": None,
-            "owner_organization_id": None,
             "is_archived": False,
             "created_at": datetime.now(UTC),
         },
@@ -290,11 +305,6 @@ def env(mocker):  # type: ignore[no-untyped-def]
     mocker.patch.object(AttestationRepository, "latest_active_confirmed", fake_latest)
     mocker.patch.object(AttestationRepository, "get_by_id", fake_att_get_by_id)
     mocker.patch.object(AttestationRepository, "method_code_map", fake_method_code_map)
-
-    async def fake_is_member(_self: object, _u: uuid.UUID, _o: uuid.UUID) -> bool:
-        return True
-
-    mocker.patch.object(MembershipRepository, "is_member", fake_is_member)
 
     async def fake_profile_id(_s: object, code: str) -> int:
         return {"quick-check": 1, "standard": 2, "full-assessment": 3}[code]

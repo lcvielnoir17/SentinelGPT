@@ -4,19 +4,20 @@ The ONLY module where the Phase 7 execution gate is opened
 (``SandboxedScanExecutor(enable_execution=True)``). Everything wired here is
 the exact chain proven in Phases 2–6:
 
-    PlatformDnsResolver → ScanTargetResolutionService (fresh DNS + policy)
-    → DockerEgressSandbox (kernel deny-by-default, privilege-dropped)
-    → sandbox-bound HTTP transport → HttpSecurityAnalysisEngine
+     PlatformDnsResolver → ScanTargetResolutionService (fresh DNS + policy)
+     → DockerEgressSandbox (kernel deny-by-default, privilege-dropped)
+     → sandbox-bound HTTP transport → HttpSecurityAnalysisEngine
+         (+ TlsPostureEngine for https origins, same sandbox/attempt)
 
-The domain service receives this as an opaque ``ScanPipeline``; tests inject
-their own implementation instead of bypassing any layer.
+ The domain service receives this as an opaque ``ScanPipeline``; tests inject
+ their own implementation instead of bypassing any layer.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from src.config.constants import ENGINE_HEADERS
+from src.config.constants import ENGINE_HEADERS, ENGINE_TLS
 
 if TYPE_CHECKING:
     from src.domain.scans.scan_service import ScanPipeline
@@ -31,7 +32,9 @@ class DefaultScanPipeline:
     def __init__(self, *, sandbox_image: str | None = None) -> None:
         from src.domain.scanning.resolution import ScanTargetResolutionService
         from src.infrastructure.network.dns_resolver import PlatformDnsResolver
+        from src.scanning.engines.combined import CompositeEngine
         from src.scanning.engines.http_analysis import HttpSecurityAnalysisEngine
+        from src.scanning.engines.tls_posture import TlsPostureEngine
         from src.scanning.runner import SandboxedScanExecutor
         from src.scanning.sandbox.docker_sandbox import DockerEgressSandbox, DockerSandboxConfig
 
@@ -42,11 +45,31 @@ class DefaultScanPipeline:
             lambda policy: DockerEgressSandbox(policy, config=DockerSandboxConfig(image=image)),
             enable_execution=True,  # ADR-0009: gate OPENED only in this file.
         )
-        self._engine = HttpSecurityAnalysisEngine()
+        self._http_engine = HttpSecurityAnalysisEngine()
+        self._tls_engine = TlsPostureEngine()
+        self._composite = CompositeEngine(
+            primary=self._http_engine,
+            secondary=self._tls_engine,
+            primary_code=ENGINE_HEADERS,
+            primary_version=self._http_engine.version,
+            secondary_code=ENGINE_TLS,
+            secondary_version=self._tls_engine.version,
+        )
+        self._engine = self._http_engine
 
     def run(self, *, hostname: str, scheme: str, port: int, path: str) -> Any:
         from src.scanning.engines.services import OriginSpec
 
+        if scheme.lower() == "https":
+            # One sandbox, one attempt, two engines: HTTP analysis plus TLS
+            # posture over the same validated context. Plain-http origins
+            # run the HTTP engine alone (the TLS engine would report
+            # not-applicable without network use).
+            return self._executor.execute_scan(
+                hostname,
+                engine=cast("SandboxAwareEngine", self._composite),
+                origin=OriginSpec(scheme=scheme, port=port or None, path=path),
+            )
         return self._executor.execute_scan(
             hostname,
             engine=cast("SandboxAwareEngine", self._engine),

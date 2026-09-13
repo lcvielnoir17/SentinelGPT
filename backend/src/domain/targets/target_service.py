@@ -3,9 +3,8 @@
 Implements the SRS Chapter 5 Section 4 Target contract against the Chapter 4
 Section 4.4 schema. Access rules (Chapter 3 Section 18, server-side only):
 
-* A target is visible to its owning user or to members of the owning
-  organization — everyone else receives 404 NOT_FOUND (no existence leak).
-* Creating under an organization requires membership of that organization.
+* A target is visible only to its owning user — everyone else receives
+  404 NOT_FOUND (no existence leak).
 * hostname/URL are immutable; a URL change is a new target (Chapter 5 §4).
 """
 
@@ -16,12 +15,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from src.domain.errors import DuplicateTargetError, ForbiddenError, NotFoundError
+from src.domain.errors import DuplicateTargetError, NotFoundError
 from src.domain.targets.target_normalization import normalize_target
 from src.infrastructure.database.models import Target
-from src.infrastructure.database.repositories.membership_repository import (
-    MembershipRepository,
-)
 from src.infrastructure.database.repositories.target_repository import TargetRepository
 
 if TYPE_CHECKING:
@@ -37,8 +33,7 @@ class TargetDetails:
     id: uuid.UUID
     hostname: str
     normalized_url: str
-    owner_organization_id: uuid.UUID | None
-    owner_user_id: uuid.UUID | None
+    owner_user_id: uuid.UUID
     is_archived: bool
     created_at: datetime
 
@@ -58,28 +53,17 @@ class TargetService:
         self._principal = principal
         self._session = session
         self._repository = TargetRepository(session)
-        self._memberships = MembershipRepository(session)
 
     async def register_target(
         self,
         hostname: str,
         url: str,
-        owner_organization_id: uuid.UUID | None,
     ) -> TargetDetails:
-        """Create a target owned by an organization (member required) or the user."""
+        """Create a target owned by the requesting user."""
         normalized = normalize_target(hostname, url)
-
-        if owner_organization_id is not None:
-            if not await self._memberships.is_member(self._principal.id, owner_organization_id):
-                raise ForbiddenError()
-            owner_organization: uuid.UUID | None = owner_organization_id
-            owner_user: uuid.UUID | None = None
-        else:
-            owner_organization = None
-            owner_user = self._principal.id
+        owner_user = self._principal.id
 
         existing = await self._repository.find_by_owner_and_url(
-            owner_organization_id=owner_organization,
             owner_user_id=owner_user,
             normalized_url=normalized.normalized_url,
         )
@@ -89,7 +73,6 @@ class TargetService:
         now = datetime.now(UTC)
         target = Target(
             id=uuid.uuid4(),
-            owner_organization_id=owner_organization,
             owner_user_id=owner_user,
             hostname=normalized.hostname,
             normalized_url=normalized.normalized_url,
@@ -107,7 +90,6 @@ class TargetService:
             # true duplicate (409) from any other constraint violation.
             await self._session.rollback()
             raced = await self._repository.find_by_owner_and_url(
-                owner_organization_id=owner_organization,
                 owner_user_id=owner_user,
                 normalized_url=normalized.normalized_url,
             )
@@ -124,21 +106,14 @@ class TargetService:
     async def list_targets(
         self,
         *,
-        organization_id: uuid.UUID | None,
         include_archived: bool,
         limit: int,
         cursor_created_at: datetime | None,
         cursor_id: uuid.UUID | None,
     ) -> TargetPage:
-        """List targets for the requester's personal scope or a member org."""
-        if organization_id is not None and not await self._memberships.is_member(
-            self._principal.id, organization_id
-        ):
-            raise ForbiddenError()
-
+        """List targets owned by the requesting user."""
         rows = await self._repository.list_for_owner(
-            owner_organization_id=organization_id,
-            owner_user_id=None if organization_id is not None else self._principal.id,
+            owner_user_id=self._principal.id,
             include_archived=include_archived,
             limit=limit + 1,
             cursor_created_at=cursor_created_at,
@@ -169,11 +144,7 @@ class TargetService:
             raise NotFoundError()
         if target.owner_user_id == self._principal.id:
             return target
-        if target.owner_organization_id is not None and await self._memberships.is_member(
-            self._principal.id, target.owner_organization_id
-        ):
-            return target
-        # Cross-tenant targets are indistinguishable from missing ones.
+        # Cross-owner targets are indistinguishable from missing ones.
         raise NotFoundError()
 
 
@@ -182,7 +153,6 @@ def _to_details(target: Target) -> TargetDetails:
         id=target.id,
         hostname=target.hostname,
         normalized_url=target.normalized_url,
-        owner_organization_id=target.owner_organization_id,
         owner_user_id=target.owner_user_id,
         is_archived=target.is_archived,
         created_at=target.created_at,

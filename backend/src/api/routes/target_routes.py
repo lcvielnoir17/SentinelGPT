@@ -1,8 +1,8 @@
 """Target endpoints (SRS Chapter 5, Section 4; schema Chapter 4, Section 4.4).
 
 All routes require an authenticated principal (``CurrentUser``) and enforce
-tenant isolation server-side: resources owned by another entity are reported
-as 404 NOT_FOUND so nothing about other organizations' data leaks.
+owner isolation server-side: resources owned by another user are reported
+as 404 NOT_FOUND so nothing about other users' data leaks.
 """
 
 from __future__ import annotations
@@ -32,10 +32,6 @@ class CreateTargetRequest(BaseModel):
 
     hostname: str = Field(min_length=1, max_length=255)
     url: str = Field(min_length=1, max_length=2000)
-    owner_organization_id: uuid.UUID | None = Field(
-        default=None,
-        validation_alias="ownerOrganizationId",
-    )
 
 
 class UpdateTargetRequest(BaseModel):
@@ -57,8 +53,7 @@ class TargetResponse(BaseModel):
     id: uuid.UUID
     hostname: str
     normalized_url: str = Field(serialization_alias="url")
-    owner_organization_id: uuid.UUID | None = Field(serialization_alias="ownerOrganizationId")
-    owner_user_id: uuid.UUID | None = Field(serialization_alias="ownerUserId")
+    owner_user_id: uuid.UUID = Field(serialization_alias="ownerUserId")
     is_archived: bool = Field(serialization_alias="isArchived")
     created_at: datetime = Field(serialization_alias="createdAt")
     status: str = SCAN_STATUS_PENDING_ATTESTATION
@@ -99,7 +94,6 @@ def _to_response(details: TargetDetails) -> TargetResponse:
         id=details.id,
         hostname=details.hostname,
         normalized_url=details.normalized_url,
-        owner_organization_id=details.owner_organization_id,
         owner_user_id=details.owner_user_id,
         is_archived=details.is_archived,
         created_at=details.created_at,
@@ -117,12 +111,11 @@ async def create_target(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> TargetResponse:
-    """Register a target for the requesting user or a member organization."""
+    """Register a target for the requesting user."""
     service = TargetService(session, current_user)
     details = await service.register_target(
         hostname=payload.hostname,
         url=payload.url,
-        owner_organization_id=payload.owner_organization_id,
     )
     return _to_response(details)
 
@@ -130,12 +123,11 @@ async def create_target(
 @router.get(
     "",
     response_model=TargetListResponse,
-    summary="List targets owned by the current user or a member organization",
+    summary="List targets owned by the current user",
 )
 async def list_targets(
     session: SessionDep,
     current_user: CurrentUser,
-    organization_id: Annotated[uuid.UUID | None, Query(alias="organizationId")] = None,
     include_archived: Annotated[bool, Query(alias="includeArchived")] = False,
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     cursor: Annotated[str | None, Query()] = None,
@@ -147,7 +139,6 @@ async def list_targets(
 
     service = TargetService(session, current_user)
     page = await service.list_targets(
-        organization_id=organization_id,
         include_archived=include_archived,
         limit=limit,
         cursor_created_at=cursor_created_at,

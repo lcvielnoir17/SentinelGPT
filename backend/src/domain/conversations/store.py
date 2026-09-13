@@ -56,8 +56,13 @@ class ConversationStore(Protocol):
 
     async def append_message(
         self, firebase_uid: str, conversation_id: str, message: ConversationMessage
-    ) -> None:
-        """Append one message and bump the conversation's activity stamp."""
+    ) -> ConversationMessage:
+        """Append one message and bump the conversation's activity stamp.
+
+        Returns the stored copy with the canonical ``sequence`` assigned so
+        callers (e.g. the send-message response) report the same ordering
+        the history reads observe.
+        """
         ...
 
     async def list_messages(

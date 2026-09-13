@@ -1,0 +1,32 @@
+# =============================================================================
+# SentinelGPT — Cloud Build / Cloud Run `--source` upload filter.
+#
+# `gcloud builds submit` and `gcloud run deploy --source` upload the source
+# directory to Google. This file keeps local secrets and build outputs out
+# of that upload (mirrors .dockerignore, which only affects `docker build`).
+# NEVER remove the .env entries: the repo-root .env holds real local
+# credentials and must not leave the machine.
+# =============================================================================
+.git/
+.gitignore
+.gcloudignore
+.env
+.env.*
+!.env.example
+frontend/.env.local
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+node_modules/
+dist/
+docs/
+tests/
+.coverage
+htmlcov/
+*.log
+postgres-data/
+redis-data/

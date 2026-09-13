@@ -34,7 +34,6 @@ function target(id: string): Target {
     id,
     hostname: `${id}.example.com`,
     url: `https://${id}.example.com/`,
-    ownerOrganizationId: null,
     ownerUserId: "user-1",
     isArchived: false,
     createdAt: "2026-09-04T10:00:00Z",

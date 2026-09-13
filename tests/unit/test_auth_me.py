@@ -120,7 +120,7 @@ async def test_me_returns_user_info_when_authenticated(
     assert body["id"] == str(user.id)
     assert body["email"] == user.email
     assert "mfaEnabled" in body
-    assert "organizations" in body
+    assert "organizations" not in body
     # No token material may appear in the body.
     lowered = response.text.lower()
     assert "token" not in lowered
