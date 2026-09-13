@@ -118,7 +118,7 @@ def run_baseline_b(fixture: dict[str, Any]) -> dict[str, Any]:
 def run_sentinelgpt(fixture: dict[str, Any]) -> dict[str, Any]:
     """Full deterministic pipeline over fixture observations (real code)."""
     hostname = str(fixture["hostname"])
-    groups = _fingerprint_groups(hostname, fixture["scan_a"], fixture["scan_b"])
+    groups, unidentified = _fingerprint_groups(hostname, fixture["scan_a"], fixture["scan_b"])
     history = _history_by_fingerprint(groups, dict(fixture["history"]))
     technologies = tuple(sorted(set(fixture["technologies"])))
     canonical: list[dict[str, Any]] = []
@@ -181,24 +181,36 @@ def run_sentinelgpt(fixture: dict[str, Any]) -> dict[str, Any]:
         "pipeline": "sentinelgpt",
         "priority_version": PRIORITY_VERSION_V2,
         "groups": canonical,
+        "unidentified": sorted(unidentified),
     }
 
 
 def _fingerprint_groups(
     hostname: str, scan_a: list[dict[str, Any]], scan_b: list[dict[str, Any]]
-) -> dict[str, list[dict[str, Any]]]:
-    """Group observations by real fingerprint (both scans, member-tagged)."""
+) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
+    """Group observations by real fingerprint (both scans, member-tagged).
+
+    Observations without an extractable identifier mirror production
+    (``ScanService._safe_fingerprint``): they persist fingerprint-less
+    and join no group. Their ids return separately so evaluation can
+    distinguish "unidentified" from "missing".
+    """
     groups: dict[str, list[dict[str, Any]]] = {}
+    unidentified: list[str] = []
     for scan_name, observations in (("scan_a", scan_a), ("scan_b", scan_b)):
         for obs in observations:
-            fingerprint = generate_fingerprint_from_finding(
-                hostname=hostname,
-                category_code=str(obs["category"]),
-                title=str(obs["title"]),
-                location=str(obs.get("location", "")),
-            )
+            try:
+                fingerprint = generate_fingerprint_from_finding(
+                    hostname=hostname,
+                    category_code=str(obs["category"]),
+                    title=str(obs["title"]),
+                    location=str(obs.get("location", "")),
+                )
+            except (UnsupportedFingerprintCategory, ValueError):
+                unidentified.append(str(obs["obs_id"]))
+                continue
             groups.setdefault(fingerprint, []).append({**obs, "scan": scan_name})
-    return groups
+    return groups, sorted(unidentified)
 
 
 def _history_by_fingerprint(
@@ -234,6 +246,50 @@ def _compliance_pairs(category: str) -> list[list[str]]:
     return sorted(pairs)
 
 
+def assess_fixture_compliance(
+    groups: list[dict[str, Any]],
+) -> dict[str, dict[str, str]]:
+    """Assessment states per framework/control over pipeline groups.
+
+    Builds minimal finding views (category + lifecycle only) and runs
+    the REAL ``assess_control`` from the compliance domain, so the
+    status semantics under test are the production semantics. Views
+    carry no remediation state: unremediated-by-default is the honest
+    baseline for assessment checks.
+    """
+    from src.domain.compliance.assessment import assess_control
+
+    views = [
+        {
+            "finding_id": f"research-{i}",
+            "fingerprint": f"research-{i}",
+            "target_id": "research-target",
+            "scan_id": "research-scan",
+            "category": group.get("category"),
+            "title": "",
+            "severity": group.get("severity", ""),
+            "lifecycle": group.get("lifecycle"),
+            "remediation_status": None,
+            "priority_level": None,
+            "evidence": [],
+            "observed_at": None,
+        }
+        for i, group in enumerate(groups)
+    ]
+    result: dict[str, dict[str, str]] = {}
+    for framework_id in FRAMEWORKS:
+        framework = get_framework(framework_id)
+        if framework is None:
+            continue
+        states: dict[str, str] = {}
+        for control in framework.controls:
+            states[control.control_id] = str(
+                assess_control(framework, control.control_id, views)["status"]
+            )
+        result[framework_id] = states
+    return result
+
+
 def fingerprint_of(hostname: str, category: str, title: str, location: str = "") -> str:
     """Test helper: fingerprint one synthetic observation (real code)."""
     try:
@@ -247,6 +303,7 @@ def fingerprint_of(hostname: str, category: str, title: str, location: str = "")
 __all__ = [
     "BASELINE_B_PRIORITY",
     "FRAMEWORKS",
+    "assess_fixture_compliance",
     "fingerprint_of",
     "max_severity",
     "normalize_title",

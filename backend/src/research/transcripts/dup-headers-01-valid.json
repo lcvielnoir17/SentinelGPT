@@ -1,0 +1,32 @@
+{
+  "transcript_version": "sgpt.transcript.v1",
+  "provider": "synthetic-test-double",
+  "model": "scripted-reply-v1",
+  "model_version": null,
+  "evaluated_at": "2026-09-01T00:00:00+00:00",
+  "question": "What are the highest-priority unresolved security issues?",
+  "fixture_id": "dup-headers-01",
+  "pipeline": "sentinelgpt",
+  "evidence_hash": "255d8422817ab6daa24cdfc8c9cdc3846b3430f620d22a6488c515d618c3cd96",
+  "response": {
+    "summary": "One medium-severity header gap is new and open.",
+    "key_points": [
+      "Content-Security-Policy is missing and new"
+    ],
+    "citations": [
+      {
+        "finding_id": "617543c7fc53d50b12c5cfa511e1c8b324641b3999c7e301217f1ab0d70d9903",
+        "note": "open gap"
+      }
+    ],
+    "recommended_actions": [
+      "Deploy a Content-Security-Policy header"
+    ],
+    "compliance_notes": [
+      {
+        "control_id": "2.2",
+        "note": "gap indicated"
+      }
+    ]
+  }
+}

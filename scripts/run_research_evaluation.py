@@ -58,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     result = evaluate_dataset(dataset)
+    result["transcript_results"] = _replay_bundled_transcripts(dataset)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "evaluation.json").write_text(evaluation_to_json(result) + "\n", newline="\n")
@@ -78,11 +79,28 @@ def main(argv: list[str] | None = None) -> int:
         for name in ("baseline-a", "baseline-b", "sentinelgpt")
     )
     print(f"total mismatches listed: {mismatches}")
+    replays = result.get("transcript_results", [])
+    accepted = sum(1 for r in replays if isinstance(r, dict) and r.get("accepted"))
+    print(f"transcript replays: {accepted}/{len(replays)} accepted (offline)")
     return 0
 
 
 def _show(value: object) -> str:
     return f"{value:.3f}" if isinstance(value, float) else str(value)
+
+
+def _replay_bundled_transcripts(dataset: dict) -> list[dict]:
+    """Offline replay of committed seed transcripts (never calls a provider)."""
+    from src.research.transcripts import replay_all, validate_transcript
+
+    directory = REPO_ROOT / "backend" / "src" / "research" / "transcripts"
+    transcripts = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            transcripts.append(validate_transcript(json.loads(path.read_text())))
+        except Exception as exc:  # noqa: BLE001 - a bad seed must fail loudly below
+            raise SystemExit(f"error: invalid seed transcript {path.name}: {exc}") from exc
+    return replay_all(dataset, transcripts)
 
 
 if __name__ == "__main__":

@@ -80,7 +80,7 @@ def _fixture(**overrides: object) -> dict:
 def test_dataset_loads_with_version() -> None:
     dataset = _load()
     assert dataset["dataset_version"] == DATASET_VERSION == "sgpt.research.v1"
-    assert len(dataset["fixtures"]) == 14
+    assert len(dataset["fixtures"]) == 54
     assert [f["id"] for f in dataset["fixtures"]] == sorted(f["id"] for f in dataset["fixtures"])
 
 
@@ -187,11 +187,24 @@ def test_sentinelgpt_matches_ground_truth_fields() -> None:
 
 
 def test_baseline_input_equivalence() -> None:
-    """All pipelines consume the same observations (nothing added/removed)."""
+    """All pipelines consume the same observations (nothing added/removed).
+
+    SentinelGPT additionally reports fingerprint-less observations
+    separately (mirroring production); those are covered by the
+    unidentified assertion, not by group membership.
+    """
     for fixture in _load()["fixtures"]:
         obs_ids = sorted(o["obs_id"] for o in fixture["scan_a"] + fixture["scan_b"])
+        expected_unidentified = sorted(fixture["ground_truth"].get("unidentified", []))
         for runner in (run_baseline_a, run_baseline_b, run_sentinelgpt):
-            seen = sorted(m for g in runner(fixture)["groups"] for m in g["members"])
+            output = runner(fixture)
+            seen = sorted(m for g in output["groups"] for m in g["members"])
+            if runner is run_sentinelgpt:
+                seen = sorted(set(seen) | set(output.get("unidentified", [])))
+                assert output.get("unidentified", []) == expected_unidentified, (
+                    fixture["id"],
+                    runner.__name__,
+                )
             assert seen == obs_ids, (fixture["id"], runner.__name__)
 
 
@@ -242,9 +255,19 @@ def test_research_package_boundary_static() -> None:
             stripped = line.strip()
             if stripped.startswith("from src.") or stripped.startswith("import src."):
                 module = stripped.split()[1].rstrip(",")
-                if module != "src.research" and not module.startswith(
-                    ("src.research.", "src.domain.scans.", "src.domain.compliance.")
-                ):
+                allowed = module == "src.research" or module.startswith(
+                    (
+                        "src.research.",
+                        "src.domain.scans.",
+                        "src.domain.compliance.",
+                        # M16 transcripts reuse the pure M12 response
+                        # validator (+ its evidence dataclass): no agent,
+                        # no network, no writes.
+                        "src.domain.investigation.validator",
+                        "src.domain.investigation.evidence",
+                    )
+                )
+                if not allowed:
                     hits.append(f"{path.name}:{i}:{stripped}")
             for token in forbidden_tokens:
                 if token in line:

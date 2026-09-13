@@ -32,7 +32,12 @@ def evaluation_to_json(result: dict[str, Any]) -> str:
 
 
 def evaluation_to_csv(result: dict[str, Any]) -> str:
-    """Long-format CSV: fixture_id,pipeline,metric,value (stable order)."""
+    """Long-format CSV: fixture_id,pipeline,metric,value (stable order).
+
+    Metric rows carry per-fixture values; ``error:<kind>`` rows carry
+    per-fixture mismatch-kind counts so error taxonomy stays
+    machine-readable in the same neutral shape.
+    """
     buffer = io.StringIO()
     writer = csv.DictWriter(
         buffer, fieldnames=["fixture_id", "pipeline", "metric", "value"], dialect="excel"
@@ -42,16 +47,32 @@ def evaluation_to_csv(result: dict[str, Any]) -> str:
         pipelines = fixture.get("pipelines", {})
         for pipeline in sorted(pipelines):
             metrics_map = pipelines[pipeline].get("metrics", {})
-            for metric in sorted(metrics_map):
+            rows: list[tuple[str, str]] = [
+                (str(metric), _format_value(metrics_map[metric])) for metric in metrics_map
+            ]
+            for kind, count in _error_kinds(pipelines[pipeline].get("mismatches", [])).items():
+                rows.append((f"error:{kind}", str(count)))
+            rows.sort(key=lambda row: row[0])
+            for metric, value in rows:
                 writer.writerow(
                     {
                         "fixture_id": _neutralize_cell(str(fixture.get("fixture_id", ""))),
                         "pipeline": _neutralize_cell(str(pipeline)),
-                        "metric": _neutralize_cell(str(metric)),
-                        "value": _format_value(metrics_map[metric]),
+                        "metric": _neutralize_cell(metric),
+                        "value": value,
                     }
                 )
     return buffer.getvalue()
+
+
+def _error_kinds(mismatches: object) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if isinstance(mismatches, list):
+        for mismatch in mismatches:
+            if isinstance(mismatch, dict):
+                kind = str(mismatch.get("kind", "unknown"))
+                counts[kind] = counts.get(kind, 0) + 1
+    return counts
 
 
 def _format_value(value: object) -> str:

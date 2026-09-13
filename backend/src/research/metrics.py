@@ -128,6 +128,8 @@ def false_negative_rate(predicted: list[set[str]], expected: list[set[str]]) -> 
 
 PRIORITY_ORDER = {"P1": 4, "P2": 3, "P3": 2, "P4": 1, "NONE": 0}
 
+METRIC_VERSION = "sgpt.research.metrics.v1"
+
 
 def kendall_tau_b(predicted_ranks: dict[str, int], expected_ranks: dict[str, int]) -> float | None:
     """Rank agreement over shared keys; pairs tied on either side skipped.
@@ -174,6 +176,7 @@ def evidence_grounding_rate(groups: list[dict[str, Any]]) -> float | None:
 
 
 __all__ = [
+    "METRIC_VERSION",
     "PRIORITY_ORDER",
     "citation_validity",
     "detection_rate",

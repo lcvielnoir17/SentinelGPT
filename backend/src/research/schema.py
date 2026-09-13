@@ -92,6 +92,23 @@ def validate_fixture(raw: object, *, index: int = 0) -> dict[str, Any]:
         raise FixtureValidationError(
             f"{fixture_id}.ground_truth.compliance must map framework to control list"
         )
+    assessment = ground_truth.get("assessment", [])
+    if not isinstance(assessment, list) or any(
+        not isinstance(a, dict)
+        or not isinstance(a.get("framework"), str)
+        or not isinstance(a.get("control_id"), str)
+        or a.get("status") not in ("GAP_INDICATOR", "EVIDENCE_AVAILABLE", "NO_RELEVANT_FINDINGS")
+        for a in assessment
+    ):
+        raise FixtureValidationError(
+            f"{fixture_id}.ground_truth.assessment must list "
+            "{framework, control_id, status} expectations"
+        )
+    unidentified = ground_truth.get("unidentified", [])
+    if not isinstance(unidentified, list) or any(not isinstance(u, str) for u in unidentified):
+        raise FixtureValidationError(
+            f"{fixture_id}.ground_truth.unidentified must be a list of obs ids"
+        )
     return {
         "id": fixture_id,
         "title": str(raw.get("title", "")),
@@ -104,6 +121,8 @@ def validate_fixture(raw: object, *, index: int = 0) -> dict[str, Any]:
         "ground_truth": {
             "canonical": [dict(e) for e in canonical],
             "compliance": {k: list(v) for k, v in compliance.items()},
+            "assessment": [dict(a) for a in assessment],
+            "unidentified": list(unidentified),
         },
     }
 
@@ -188,7 +207,8 @@ def check_ground_truth_consistency(fixture: dict[str, Any]) -> list[str]:
             if member not in obs_ids:
                 problems.append(f"member {member!r} is not an observation")
             claimed.append(member)
-    uncovered = sorted(obs_ids - set(claimed))
+    unidentified = set(fixture["ground_truth"].get("unidentified", []))
+    uncovered = sorted((obs_ids - set(claimed)) - unidentified)
     if uncovered:
         problems.append(f"observations without canonical cover: {uncovered}")
     duplicates = sorted({m for m in claimed if claimed.count(m) > 1})
@@ -197,6 +217,9 @@ def check_ground_truth_consistency(fixture: dict[str, Any]) -> list[str]:
     for key in list(fixture["history"]) + list(fixture["remediation"]):
         if key not in obs_ids:
             problems.append(f"history/remediation key without observation: {key!r}")
+    for obs_id in fixture["ground_truth"].get("unidentified", []):
+        if obs_id not in obs_ids:
+            problems.append(f"unidentified key without observation: {obs_id!r}")
     return problems
 
 

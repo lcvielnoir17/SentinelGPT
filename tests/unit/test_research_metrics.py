@@ -119,19 +119,20 @@ def test_baselines_show_honest_mismatches() -> None:
     """Baselines visibly fail where they must (nothing hidden)."""
     dataset = _dataset()
     by_id = {f["id"]: evaluate_fixture(f) for f in dataset["fixtures"]}
-    # Scanner-only cannot deduplicate or resolve: singletons match nothing.
+    # Scanner-only cannot deduplicate or resolve: singletons are split
+    # fragments of the expected groups (taxonomy names the failure).
     dup = by_id["dup-headers-01"]["pipelines"]["baseline-a"]
     assert dup["metrics"]["grouping_f1"] == 0.0
     assert dup["metrics"]["grouping_precision"] == 0.0
     assert dup["metrics"]["grouping_recall"] == 0.0
-    assert any(m["kind"] == "false_positive" for m in dup["mismatches"])
+    assert any(m["kind"] == "wrong_grouping_split" for m in dup["mismatches"])
     # Rule-based splits the title variant the fingerprint merges.
     variants = by_id["title-variants-merge"]["pipelines"]["baseline-b"]
     assert variants["metrics"]["grouping_recall"] == 0.0
     # Rule-based has no history: regression reads as NEW.
     regressed = by_id["regression"]["pipelines"]["baseline-b"]
     assert regressed["metrics"]["regression_detection_rate"] == 0.0
-    assert any(m["kind"] == "lifecycle_mismatch" for m in regressed["mismatches"])
+    assert any(m["kind"] == "missed_regression" for m in regressed["mismatches"])
     # Scanner-only never resolves.
     resolved = by_id["resolution"]["pipelines"]["baseline-a"]
     assert resolved["metrics"]["resolution_detection_rate"] == 0.0
@@ -154,9 +155,13 @@ def test_mismatch_schema() -> None:
                 assert mismatch["kind"] in {
                     "false_positive",
                     "false_negative",
+                    "wrong_grouping_split",
+                    "wrong_grouping_merge",
                     "severity_mismatch",
                     "lifecycle_mismatch",
                     "priority_level_mismatch",
+                    "missed_regression",
+                    "missed_resolution",
                 }
 
 
@@ -168,7 +173,7 @@ def test_aggregate_is_honest_mean() -> None:
     assert "grouping_precision" in result["metric_definitions"]
     sentinel = result["aggregate"]["sentinelgpt"]
     assert sentinel["grouping_f1"] == 1.0
-    assert sentinel["fixture_count"] == 14
+    assert sentinel["fixture_count"] == 54
     # Baseline A cannot resolve anything anywhere it matters.
     assert result["aggregate"]["baseline-a"]["resolution_detection_rate"] == 0.0
     # Every aggregate mean recomputes from fixture values (no hidden math).

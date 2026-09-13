@@ -39,7 +39,7 @@ def test_clean_environment_run(tmp_path: pathlib.Path) -> None:
     assert completed.returncode == 0, completed.stderr
     payload = json.loads((out / "evaluation.json").read_text())
     assert payload["dataset_version"] == "sgpt.research.v1"
-    assert payload["aggregate"]["sentinelgpt"]["fixture_count"] == 14
+    assert payload["aggregate"]["sentinelgpt"]["fixture_count"] == 54
     for fixture in payload["fixtures"]:
         for result in fixture["pipelines"].values():
             assert isinstance(result["mismatches"], list)
@@ -100,9 +100,17 @@ def test_generated_result_schema(tmp_path: pathlib.Path) -> None:
     assert _run(out).returncode == 0
     payload = json.loads((out / "evaluation.json").read_text())
     assert payload["pipeline_version"].startswith("sgpt.research.pipeline.v")
+    assert payload["metric_version"] == "sgpt.research.metrics.v1"
+    assert len(payload["dataset_sha256"]) == 64
     assert set(payload["baseline_definitions"]) == {"baseline-a", "baseline-b", "sentinelgpt"}
     assert "grouping_precision" in payload["metric_definitions"]
     assert isinstance(payload["limitations"], list) and payload["limitations"]
+    assert "micro" in payload["aggregate"] and "error_taxonomy" in payload["aggregate"]
+    replays = payload["transcript_results"]
+    assert [(r["fixture_id"], r["accepted"]) for r in replays] == [
+        ("dup-headers-01", False),  # unknown-citation seed sorts first
+        ("dup-headers-01", True),
+    ]
     for fixture in payload["fixtures"]:
         assert set(fixture["pipelines"]) == {"baseline-a", "baseline-b", "sentinelgpt"}
         for result in fixture["pipelines"].values():
