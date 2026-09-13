@@ -165,6 +165,17 @@ def test_mismatch_schema() -> None:
                 }
 
 
+def test_aggregate_keys_explicit_even_when_undefined() -> None:
+    """All-None dimensions report None instead of vanishing (M18 fix)."""
+    result = evaluate_dataset(_dataset())
+    for name in ("baseline-a", "baseline-b", "sentinelgpt"):
+        assert result["aggregate"][name]["ranking_tau_b"] in (None,) or isinstance(
+            result["aggregate"][name]["ranking_tau_b"], float
+        )
+    assert result["aggregate"]["baseline-a"]["ranking_tau_b"] is None
+    assert result["aggregate"]["sentinelgpt"]["ranking_tau_b"] == 1.0
+
+
 def test_aggregate_is_honest_mean() -> None:
     result = evaluate_dataset(_dataset())
     assert result["dataset_version"] == DATASET_VERSION

@@ -113,13 +113,17 @@ def evaluate_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
     aggregate: dict[str, Any] = {}
     for name in PIPELINES:
         per_metric: dict[str, list[float]] = {}
+        keys: set[str] = set()
         for entry in fixtures:
             for metric, value in entry["pipelines"][name]["metrics"].items():
+                keys.add(metric)
                 if isinstance(value, (int, float)):
                     per_metric.setdefault(metric, []).append(float(value))
         aggregate[name] = {
-            metric: (sum(values) / len(values) if values else None)
-            for metric, values in per_metric.items()
+            metric: (
+                sum(per_metric[metric]) / len(per_metric[metric]) if metric in per_metric else None
+            )
+            for metric in sorted(keys)
         }
         aggregate[name]["fixture_count"] = len(fixtures)
     aggregate["micro"] = _micro_averages(dataset)
