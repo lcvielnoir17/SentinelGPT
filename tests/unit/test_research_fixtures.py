@@ -265,6 +265,9 @@ def test_research_package_boundary_static() -> None:
                         # no network, no writes.
                         "src.domain.investigation.validator",
                         "src.domain.investigation.evidence",
+                        # M19 collection renders prompts through the pure
+                        # M12 prompt constructors (constants + framing).
+                        "src.domain.investigation.prompts",
                     )
                 )
                 if not allowed:

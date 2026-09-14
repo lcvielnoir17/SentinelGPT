@@ -179,11 +179,22 @@ def test_replay_all_and_determinism() -> None:
 
 
 def test_replay_contains_no_secrets_or_network() -> None:
-    """Static pins: research code has no network/secret capabilities."""
+    """Static pins mirror the package guard (imports + embedded values)."""
     import pathlib as _pathlib
+    import re as _re
 
-    network_imports = ("import socket", "import httpx", "from httpx", "import requests")
-    secret_markers = ("API_KEY", "api_key=", "Authorization:")
+    network_imports = (
+        "import socket",
+        "import httpx",
+        "from httpx",
+        "import requests",
+        "from requests",
+        "import google",
+        "from google",
+    )
+    secret_value = _re.compile(
+        r"(?:KEY|SECRET|TOKEN|PASSWORD)\s*=\s*[\"']([A-Za-z0-9+/=_-]{20,})[\"']"
+    )
     hits = []
     for path in sorted((_pathlib.Path("backend/src/research")).rglob("*.py")):
         if path.name == "__init__.py":
@@ -193,7 +204,6 @@ def test_replay_contains_no_secrets_or_network() -> None:
             for token in network_imports:
                 if stripped.startswith(token):
                     hits.append(f"{path.name}:{i}:{token}")
-            for token in secret_markers:
-                if token in line and "no " not in line.lower():
-                    hits.append(f"{path.name}:{i}:{token}")
+            if secret_value.search(line) and "getenv" not in line and "environ" not in line:
+                hits.append(f"{path.name}:{i}:embedded-secret")
     assert hits == []

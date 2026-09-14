@@ -182,3 +182,37 @@ run.
 - Compliance expectations cover mapping retrieval and assessment
   states, not full-framework audits.
 - Reports/PDFs are not part of the evaluation surface.
+
+## 10. Live-provider transcript collection (M19)
+
+Status: NOT PERFORMED — no provider key exists in this environment,
+so no live call was ever made. The framework below is fully built
+and offline-verified, ready for an operator with credentials.
+
+- Opt-in: `RESEARCH_LIVE_PROVIDER=1` plus a usable `GEMINI_API_KEY`
+  in the environment. Anything else prints a one-line "not
+  performed" reason and exits 0 without touching the network.
+  `scripts/collect_live_transcripts.py --out <quarantine-dir>`
+  (default: system temp, never the repository).
+- Prompt set: 12 predeclared questions in
+  `backend/src/research/live_prompts.py` (`sgpt.live-prompts.v1`),
+  bound to existing fixtures (9 standard + 3 adversarial); the list
+  is frozen in code and every prompt's fixture must exist (tested).
+- Evidence: fixture pipeline output rendered through the production
+  M12 prompt/validator path (no database, no production data, no
+  ground-truth labels sent).
+- Collection records every attempt (completed/accepted, completed/
+  rejected, timeout, provider failure, sanitization reject, empty)
+  and stores sanitized transcripts only; credential-pattern hits
+  reject storage. Generation uses provider defaults (temperature
+  unpinned — recorded honestly as such).
+- Replay: the committed M16 `replay_transcript` path re-derives
+  evidence, verifies hashes, and runs the M12 validator offline.
+- Metrics: acceptance rate, citation-validity mean, unsupported-claim
+  rate, adversarial accounting — denominators explicit, never called
+  "accuracy".
+- Review: `live-manual-review.csv` template keeps automated and human
+  columns separate; human assessment never feeds metrics.
+- Artifacts (`live-transcripts.json/csv`, `live-evaluation.json`,
+  `live-manual-review.csv`, `live-metadata.json`) stay outside the
+  deterministic dataset and are never auto-committed.
