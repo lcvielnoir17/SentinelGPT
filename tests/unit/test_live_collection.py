@@ -481,7 +481,7 @@ def test_main_end_to_end_with_fake_factory(
     agent = FakeAgent(json.dumps(_answer()))
     monkeypatch.setenv("RESEARCH_LIVE_PROVIDER", "1")
     monkeypatch.setenv("GEMINI_API_KEY", "k" * 30)
-    monkeypatch.setattr(collector_script, "default_provider_factory", lambda: agent)
+    monkeypatch.setattr(collector_script, "default_provider_factory", lambda *_a, **_k: agent)
 
     exit_code = collector_script.main(
         ["--out", str(tmp_path), "--dataset", str(DATASET_PATH.resolve())]

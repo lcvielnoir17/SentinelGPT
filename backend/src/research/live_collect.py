@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from src.domain.investigation.prompts import build_evidence_block, build_system_instructions
 from src.domain.investigation.validator import validate_investigation_response
 from src.research.live_config import LiveConfig, resolve_config
+from src.research.live_errors import sanitize_provider_error
 from src.research.live_evidence import build_live_evidence
 from src.research.live_prompts import get_prompt_set
 from src.research.live_sanitize import scan_response
@@ -119,8 +120,8 @@ def _collect_one(
     except Exception as exc:  # noqa: BLE001 - every failure is data
         name = type(exc).__name__
         if "timeout" in name.lower() or "Timeout" in str(exc):
-            return _attempt(prompt, "timeout", name, None)
-        return _attempt(prompt, "provider_failed", name, None)
+            return _attempt(prompt, "timeout", sanitize_provider_error(exc), None)
+        return _attempt(prompt, "provider_failed", sanitize_provider_error(exc), None)
     if not isinstance(raw, str) or not raw.strip():
         return _attempt(prompt, "empty_response", "empty reply", None)
     hits = scan_response(raw)

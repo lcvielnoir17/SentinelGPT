@@ -40,14 +40,28 @@ from src.research.schema import DATASET_VERSION, validate_dataset  # noqa: E402
 from src.research.transcripts import replay_all  # noqa: E402
 
 
-def default_provider_factory() -> object:
-    """Build the shared conversation agent from the environment key."""
-    from src.api.dependencies import get_conversation_agent
+def default_provider_factory(model: str | None = None) -> object:
+    """Build the M19 research agent for the configured research model.
 
-    agent = get_conversation_agent()
-    if agent is None:
+    M19-only construction path: the agent is built directly with the
+    selected ``LIVE_PROVIDER_MODEL`` value instead of the production
+    configured model. Production agent wiring is untouched; this
+    factory never reads production model settings.
+    """
+    from src.infrastructure.ai.gemini_chat_agent import GeminiConversationAgent
+    from src.infrastructure.secrets import get_gemini_api_key
+    from src.research.live_config import resolve_config
+
+    selected = model.strip() if isinstance(model, str) and model.strip() else ""
+    if not selected:
+        selected = resolve_config(dict(os.environ)).model
+    api_key = get_gemini_api_key()
+    if not api_key:
         raise ProviderUnavailableError("AI analyst is not configured")
-    return agent
+    try:
+        return GeminiConversationAgent(api_key=api_key, model=selected)
+    except Exception as exc:  # noqa: BLE001 - accounted upstream, never leaks key
+        raise ProviderUnavailableError(f"research agent unavailable: {type(exc).__name__}") from exc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -70,7 +84,9 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(args.out)
 
     summary = collect_transcripts(
-        dataset, out_dir=out_dir, provider_factory=default_provider_factory
+        dataset,
+        out_dir=out_dir,
+        provider_factory=lambda: default_provider_factory(model=config.model),
     )
     # Current-run transcripts only: the per-question files written above.
     # live-transcripts.json is produced later by write_artifacts() and must
