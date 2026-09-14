@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+from typing import Any
 
 import pytest
 
@@ -21,9 +22,11 @@ from src.research.live_config import (
     collection_status,
     resolve_config,
 )
+from src.research.live_discovery import TranscriptDiscoveryError, discover_transcripts
 from src.research.live_prompts import PROMPT_VERSION, get_prompt_set
 from src.research.live_sanitize import scan_response
 from src.research.schema import validate_dataset
+from src.research.transcripts import validate_transcript
 
 DATASET_PATH = pathlib.Path("backend/src/research/dataset.json")
 
@@ -244,8 +247,6 @@ def test_malformed_and_empty_replies_recorded(tmp_path: pathlib.Path) -> None:
 
 def test_evidence_hash_mismatch_rejected() -> None:
     """Replay fixtures from M16 cover hash mismatch; live format matches."""
-    from src.research.transcripts import validate_transcript
-
     assert (
         validate_transcript(
             {
@@ -261,6 +262,174 @@ def test_evidence_hash_mismatch_rejected() -> None:
         )["question"]
         == "q"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Current-run transcript discovery (M19 fix)                                   #
+#                                                                              #
+# Every test below executes the shipped code path: collect_transcripts()       #
+# writes per-question files, discover_transcripts() reads them back, and      #
+# main() wires the whole pipeline. Nothing here re-implements discovery.      #
+# --------------------------------------------------------------------------- #
+
+
+def _collect_success(tmp_path: pathlib.Path) -> dict[str, Any]:
+    """Run a fully successful collection into tmp_path with a FakeAgent."""
+    agent = FakeAgent(json.dumps(_answer()))
+    return collect_transcripts(
+        _dataset(),
+        out_dir=tmp_path,
+        agent=agent,
+        environment={"RESEARCH_LIVE_PROVIDER": "1", "GEMINI_API_KEY": "k" * 30},
+    )
+
+
+def test_discover_fresh_success(tmp_path: pathlib.Path) -> None:
+    """Fresh successful run: all 12 current-run transcripts are discovered."""
+    summary = _collect_success(tmp_path)
+    assert summary["transcripts_stored"] == 12
+
+    transcripts = discover_transcripts(tmp_path)
+
+    prompts = get_prompt_set()
+    assert len(transcripts) == 12
+    assert [t["fixture_id"] for t in transcripts] == [p.fixture_id for p in prompts]
+    assert [t["question"] for t in transcripts] == [p.question for p in prompts]
+    for transcript in transcripts:
+        validate_transcript(transcript)  # every record passes the real schema
+        assert transcript["response"]["summary"] == "One open gap."
+
+
+def test_discover_all_twelve_replayed(tmp_path: pathlib.Path) -> None:
+    """Discovered current-run transcripts flow into replay_all()."""
+    from src.research.transcripts import replay_all
+
+    _collect_success(tmp_path)
+    transcripts = discover_transcripts(tmp_path)
+
+    replays = replay_all(_dataset(), transcripts)
+
+    assert len(replays) == 12
+    assert all("accepted" in replay for replay in replays)
+
+
+def test_discover_ignores_stale_artifacts(tmp_path: pathlib.Path) -> None:
+    """Stale previous-run artifacts never contaminate the current run."""
+    stale = {
+        "transcript_version": "sgpt.transcript.v1",
+        "provider": "synthetic-test-double",
+        "model": "scripted-reply-v1",
+        "question": "Stale question from an old run.",
+        "fixture_id": "stale-fixture-00",
+        "pipeline": "sentinelgpt",
+        "evidence_hash": "0" * 64,
+        "response": _answer(),
+    }
+    (tmp_path / "live-transcripts.json").write_text(json.dumps([stale]))
+    (tmp_path / "live-transcripts.csv").write_text("transcript_id,stale\n")
+    (tmp_path / "live-evaluation.json").write_text(json.dumps({"metrics": {}}))
+    (tmp_path / "live-manual-review.csv").write_text("reviewer,stale\n")
+    (tmp_path / "live-metadata.json").write_text(json.dumps({"version": "old"}))
+    (tmp_path / "notes.json").write_text(json.dumps({"foreign": True}))
+
+    _collect_success(tmp_path)
+    transcripts = discover_transcripts(tmp_path)
+
+    assert len(transcripts) == 12
+    assert all(t["fixture_id"] != "stale-fixture-00" for t in transcripts)
+    assert all("Stale question" not in t["question"] for t in transcripts)
+
+
+def test_discover_empty_run(tmp_path: pathlib.Path) -> None:
+    """A directory with no per-question files yields a clean empty result."""
+    assert discover_transcripts(tmp_path) == []
+
+
+def test_discover_provider_failures(tmp_path: pathlib.Path) -> None:
+    """Failed prompts write no transcript files and stay accounted for."""
+    agent = FakeAgent(RuntimeError("provider down"))
+    summary = collect_transcripts(
+        _dataset(),
+        out_dir=tmp_path,
+        agent=agent,
+        environment={"RESEARCH_LIVE_PROVIDER": "1", "GEMINI_API_KEY": "k" * 30},
+    )
+
+    assert len(summary["attempts"]) == 12
+    assert {a["outcome"] for a in summary["attempts"]} == {"provider_failed"}
+    assert summary["transcripts_stored"] == 0
+    assert discover_transcripts(tmp_path) == []
+
+
+def test_discover_malformed_file_raises(tmp_path: pathlib.Path) -> None:
+    """Corrupt evidence fails closed: the shipped code raises, naming the file."""
+    (tmp_path / "q01-priority.json").write_text("not json {{{")
+
+    with pytest.raises(TranscriptDiscoveryError, match="q01-priority"):
+        discover_transcripts(tmp_path)
+
+
+def test_discover_schema_invalid_file_raises(tmp_path: pathlib.Path) -> None:
+    """A schema-invalid per-question file raises, naming the file."""
+    (tmp_path / "q02-regression.json").write_text(json.dumps({"bogus": True}))
+
+    with pytest.raises(TranscriptDiscoveryError, match="q02-regression"):
+        discover_transcripts(tmp_path)
+
+
+def test_artifacts_after_discovery(tmp_path: pathlib.Path) -> None:
+    """Discovery output flows through replay/metrics into write_artifacts()."""
+    from src.research.live_artifacts import write_artifacts
+    from src.research.live_metrics import evaluate_attempts
+    from src.research.transcripts import replay_all
+
+    summary = _collect_success(tmp_path)
+    transcripts = discover_transcripts(tmp_path)
+    replays = replay_all(_dataset(), transcripts)
+    metrics = evaluate_attempts(summary["attempts"], replays)
+    names = write_artifacts(
+        tmp_path,
+        transcripts=transcripts,
+        replays=replays,
+        metrics=metrics,
+        metadata={"provider": "p", "model": "m"},
+    )
+
+    assert names == [
+        "live-transcripts.json",
+        "live-transcripts.csv",
+        "live-evaluation.json",
+        "live-manual-review.csv",
+        "live-metadata.json",
+    ]
+    stored = json.loads((tmp_path / "live-transcripts.json").read_text())
+    assert isinstance(stored, list) and len(stored) == 12
+    evaluation = json.loads((tmp_path / "live-evaluation.json").read_text())
+    assert evaluation["attempts_total"] == 12
+
+
+def test_main_end_to_end_with_fake_factory(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Execute the real main(): collect -> discover -> replay -> artifacts."""
+    from scripts import collect_live_transcripts as collector_script
+
+    agent = FakeAgent(json.dumps(_answer()))
+    monkeypatch.setenv("RESEARCH_LIVE_PROVIDER", "1")
+    monkeypatch.setenv("GEMINI_API_KEY", "k" * 30)
+    monkeypatch.setattr(collector_script, "default_provider_factory", lambda: agent)
+
+    exit_code = collector_script.main(
+        ["--out", str(tmp_path), "--dataset", str(DATASET_PATH.resolve())]
+    )
+
+    assert exit_code == 0
+    assert len(agent.calls) == 12
+    stored = json.loads((tmp_path / "live-transcripts.json").read_text())
+    assert isinstance(stored, list) and len(stored) == 12
+    evaluation = json.loads((tmp_path / "live-evaluation.json").read_text())
+    assert evaluation["attempts_total"] == 12
+    assert evaluation["attempts_by_outcome"] != {"provider_failed": 12}
 
 
 # --------------------------------------------------------------------------- #

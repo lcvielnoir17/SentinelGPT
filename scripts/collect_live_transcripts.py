@@ -34,9 +34,10 @@ for candidate in (REPO_ROOT / "backend", REPO_ROOT / "backend" / "src"):
 from src.research.live_artifacts import write_artifacts  # noqa: E402
 from src.research.live_collect import ProviderUnavailableError, collect_transcripts  # noqa: E402
 from src.research.live_config import collection_status, resolve_config  # noqa: E402
+from src.research.live_discovery import discover_transcripts  # noqa: E402
 from src.research.live_metrics import evaluate_attempts  # noqa: E402
 from src.research.schema import DATASET_VERSION, validate_dataset  # noqa: E402
-from src.research.transcripts import replay_all, validate_transcript  # noqa: E402
+from src.research.transcripts import replay_all  # noqa: E402
 
 
 def default_provider_factory() -> object:
@@ -71,10 +72,11 @@ def main(argv: list[str] | None = None) -> int:
     summary = collect_transcripts(
         dataset, out_dir=out_dir, provider_factory=default_provider_factory
     )
-    stored = sorted(
-        (out_dir / f).read_text() for f in sorted(os.listdir(out_dir)) if f.endswith(".json")
-    )
-    transcripts = [validate_transcript(json.loads(text)) for text in stored]
+    # Current-run transcripts only: the per-question files written above.
+    # live-transcripts.json is produced later by write_artifacts() and must
+    # never be read here (absent on a fresh run, stale on a reused one).
+    transcripts = discover_transcripts(out_dir)
+
     replays = replay_all(dataset, transcripts)
     metrics = evaluate_attempts(summary["attempts"], replays)
     metadata = {
