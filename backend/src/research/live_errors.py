@@ -117,4 +117,16 @@ def sanitize_provider_error(exc: BaseException, *, max_chars: int = 500) -> str:
     return diagnostic[:max_chars]
 
 
-__all__ = ["MAX_DIAGNOSTIC_CHARS", "sanitize_provider_error"]
+def is_retryable_provider_error(exc: BaseException) -> bool:
+    """True only when the failure is classified retryable (never raises)."""
+    try:
+        raw = str(exc)
+    except Exception:  # noqa: BLE001 - diagnostic must never raise
+        raw = ""
+    try:
+        return _classify_retryable(_extract_code(exc, raw), raw) == "yes"
+    except Exception:  # noqa: BLE001 - diagnostic must never raise
+        return False
+
+
+__all__ = ["MAX_DIAGNOSTIC_CHARS", "is_retryable_provider_error", "sanitize_provider_error"]

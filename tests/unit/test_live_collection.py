@@ -409,6 +409,20 @@ def test_discover_empty_run(tmp_path: pathlib.Path) -> None:
     assert discover_transcripts(tmp_path) == []
 
 
+def test_discover_reattaches_question_id(tmp_path: pathlib.Path) -> None:
+    """Discovered transcripts carry question_id for review/CSV rows."""
+    from src.research.live_review import review_sheet_rows
+    from src.research.transcripts import replay_all
+
+    _collect_success(tmp_path)
+    transcripts = discover_transcripts(tmp_path)
+    prompts = get_prompt_set()
+
+    assert [t["question_id"] for t in transcripts] == [p.question_id for p in prompts]
+    rows = review_sheet_rows(transcripts, replay_all(_dataset(), transcripts))
+    assert [row["question_id"] for row in rows] == [p.question_id for p in prompts]
+
+
 def test_discover_provider_failures(tmp_path: pathlib.Path) -> None:
     """Failed prompts write no transcript files and stay accounted for."""
     agent = FakeAgent(RuntimeError("provider down"))
@@ -484,7 +498,7 @@ def test_main_end_to_end_with_fake_factory(
     monkeypatch.setattr(collector_script, "default_provider_factory", lambda *_a, **_k: agent)
 
     exit_code = collector_script.main(
-        ["--out", str(tmp_path), "--dataset", str(DATASET_PATH.resolve())]
+        ["--out", str(tmp_path), "--dataset", str(DATASET_PATH.resolve()), "--pace-seconds", "0"]
     )
 
     assert exit_code == 0

@@ -32,7 +32,11 @@ for candidate in (REPO_ROOT / "backend", REPO_ROOT / "backend" / "src"):
         sys.path.insert(0, str(candidate))
 
 from src.research.live_artifacts import write_artifacts  # noqa: E402
-from src.research.live_collect import ProviderUnavailableError, collect_transcripts  # noqa: E402
+from src.research.live_collect import (  # noqa: E402
+    PACING_DELAY_S,
+    ProviderUnavailableError,
+    collect_transcripts,
+)
 from src.research.live_config import collection_status, resolve_config  # noqa: E402
 from src.research.live_discovery import discover_transcripts  # noqa: E402
 from src.research.live_metrics import evaluate_attempts  # noqa: E402
@@ -73,6 +77,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dataset", default=str(REPO_ROOT / "backend" / "src" / "research" / "dataset.json")
     )
+    parser.add_argument(
+        "--pace-seconds",
+        type=float,
+        default=PACING_DELAY_S,
+        help="Delay between provider calls (0 disables pacing; tests use 0).",
+    )
     args = parser.parse_args(argv)
 
     status = collection_status(dict(os.environ))
@@ -87,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         dataset,
         out_dir=out_dir,
         provider_factory=lambda: default_provider_factory(model=config.model),
+        pace_seconds=args.pace_seconds,
     )
     # Current-run transcripts only: the per-question files written above.
     # live-transcripts.json is produced later by write_artifacts() and must

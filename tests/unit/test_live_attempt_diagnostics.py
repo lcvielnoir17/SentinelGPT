@@ -231,7 +231,16 @@ def test_main_persists_diagnostics_through_real_path(
     monkeypatch.setenv("LIVE_PROVIDER_MODEL", "diag-e2e-model")
 
     assert (
-        collector_script.main(["--out", str(tmp_path), "--dataset", str(DATASET_PATH.resolve())])
+        collector_script.main(
+            [
+                "--out",
+                str(tmp_path),
+                "--dataset",
+                str(DATASET_PATH.resolve()),
+                "--pace-seconds",
+                "0",
+            ]
+        )
         == 0
     )
 

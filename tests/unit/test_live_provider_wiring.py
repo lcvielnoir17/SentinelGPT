@@ -121,7 +121,7 @@ def test_main_wires_config_model_end_to_end(
     monkeypatch.setenv(MODEL_VARIABLE, "e2e-research-model")
 
     exit_code = collector_script.main(
-        ["--out", str(tmp_path), "--dataset", str(DATASET_PATH.resolve())]
+        ["--out", str(tmp_path), "--dataset", str(DATASET_PATH.resolve()), "--pace-seconds", "0"]
     )
 
     assert exit_code == 0
@@ -148,7 +148,7 @@ def test_no_stale_production_model_when_override_set(
     monkeypatch.setenv(MODEL_VARIABLE, "override-wins-model")
 
     exit_code = collector_script.main(
-        ["--out", str(tmp_path), "--dataset", str(DATASET_PATH.resolve())]
+        ["--out", str(tmp_path), "--dataset", str(DATASET_PATH.resolve()), "--pace-seconds", "0"]
     )
 
     assert exit_code == 0

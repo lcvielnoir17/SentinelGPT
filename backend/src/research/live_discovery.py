@@ -50,9 +50,12 @@ def discover_transcripts(out_dir: Path) -> list[dict[str, Any]]:
                 f"{candidate.name}: unreadable transcript ({type(exc).__name__})"
             ) from exc
         try:
-            transcripts.append(validate_transcript(raw))
+            clean = validate_transcript(raw)
         except TranscriptValidationError as exc:
             raise TranscriptDiscoveryError(f"{candidate.name}: invalid transcript ({exc})") from exc
+        # The M16 schema carries no question_id; re-attach it from the
+        # frozen prompt allowlist so review/CSV rows keep their identity.
+        transcripts.append({**clean, "question_id": prompt.question_id})
     return transcripts
 
 

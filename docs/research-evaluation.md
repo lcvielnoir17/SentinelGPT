@@ -216,3 +216,17 @@ and offline-verified, ready for an operator with credentials.
 - Artifacts (`live-transcripts.json/csv`, `live-evaluation.json`,
   `live-manual-review.csv`, `live-metadata.json`) stay outside the
   deterministic dataset and are never auto-committed.
+- Research model: `LIVE_PROVIDER_MODEL` (default `gemini-2.5-flash`),
+  M19-only; the collector builds its agent with the configured model
+  and never reads production model settings. Pacing between calls
+  (default 12 s, `--pace-seconds` override) plus at most one bounded
+  retry on retryable transport errors keeps free-tier runs completable;
+  every prompt still yields exactly one attempt row.
+- Response handling: a surrounding markdown fence around an otherwise
+  valid JSON reply is unwrapped at the persistence boundary; anything
+  else unparseable still fails closed for the validator (unchanged).
+  Stale per-question files are cleared at collection start so reruns
+  never reuse old transcripts.
+- `live-evaluation.json` additionally carries `attempt_diagnostics`
+  (`question_id`, `outcome`, sanitized `detail` only) so provider
+  failures remain diagnosable offline without secrets.
