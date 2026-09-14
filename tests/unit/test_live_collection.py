@@ -18,6 +18,8 @@ import pytest
 
 from src.research.live_collect import ProviderUnavailableError, collect_transcripts
 from src.research.live_config import (
+    DEFAULT_MODEL,
+    MODEL_VARIABLE,
     CollectionNotEnabledError,
     collection_status,
     resolve_config,
@@ -90,6 +92,68 @@ def test_collection_off_by_default() -> None:
         {"RESEARCH_LIVE_PROVIDER": "1", "GEMINI_API_KEY": "real-secret-value-12345"}
     )
     assert config.provider == "google-genai" and config.enabled is True
+
+
+# --------------------------------------------------------------------------- #
+# Research model configuration (M19 only)                                     #
+# --------------------------------------------------------------------------- #
+
+
+def _opt_in_env() -> dict[str, str]:
+    return {"RESEARCH_LIVE_PROVIDER": "1", "GEMINI_API_KEY": "real-secret-value-12345"}
+
+
+def test_live_default_model_is_gemini_25_flash() -> None:
+    """M19 default no longer points at the retired gemini-2.0-flash."""
+    assert DEFAULT_MODEL == "gemini-2.5-flash"
+    config = resolve_config(_opt_in_env())
+    assert config.model == "gemini-2.5-flash"
+    assert config.model != "gemini-2.0-flash"
+
+
+def test_live_model_env_override() -> None:
+    """LIVE_PROVIDER_MODEL selects the research model without touching opt-in."""
+    env = _opt_in_env() | {MODEL_VARIABLE: "gemini-2.5-pro"}
+    assert resolve_config(env).model == "gemini-2.5-pro"
+    assert MODEL_VARIABLE == "LIVE_PROVIDER_MODEL"
+
+
+def test_live_model_blank_falls_back_to_default() -> None:
+    """Blank/whitespace override falls back to the safe default."""
+    for blank in ("", "   "):
+        env = _opt_in_env() | {MODEL_VARIABLE: blank}
+        assert resolve_config(env).model == DEFAULT_MODEL
+
+
+def test_live_model_config_never_holds_key_material() -> None:
+    """Resolved config and gate reasons stay secret-free."""
+    secret = "real-secret-value-12345"
+    env = _opt_in_env() | {MODEL_VARIABLE: "gemini-2.5-flash"}
+    config = resolve_config(env)
+    assert secret not in repr(config)
+    assert secret not in config.reason
+    status = collection_status(env)
+    assert secret not in status.reason
+
+
+def test_live_selected_model_reaches_metadata(tmp_path: pathlib.Path) -> None:
+    """The configured model is what the collector records in live metadata."""
+    import json as _json
+
+    from src.research.live_artifacts import write_artifacts
+
+    config = resolve_config(_opt_in_env() | {MODEL_VARIABLE: "gemini-2.5-flash"})
+    metadata = {"provider": config.provider, "model": config.model}
+    names = write_artifacts(
+        tmp_path,
+        transcripts=[],
+        replays=[],
+        metrics={},
+        metadata=metadata,
+    )
+    assert "live-metadata.json" in names
+    stored = _json.loads((tmp_path / "live-metadata.json").read_text())
+    assert stored["model"] == "gemini-2.5-flash"
 
 
 # --------------------------------------------------------------------------- #

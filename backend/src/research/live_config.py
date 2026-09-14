@@ -5,6 +5,10 @@ non-empty ``GEMINI_API_KEY`` is present in the environment. Anything
 else yields a clean "not performed" outcome — normal test runs never
 touch the network. Credentials come exclusively from the environment;
 they are never printed, stored, or embedded in artifacts.
+
+The research provider model is selected via ``LIVE_PROVIDER_MODEL``
+(default ``gemini-2.5-flash``). This knob is M19-research only and does
+not affect production configuration elsewhere.
 """
 
 from __future__ import annotations
@@ -16,6 +20,8 @@ OPT_IN_VARIABLE = "RESEARCH_LIVE_PROVIDER"
 OPT_IN_VALUE = "1"
 KEY_VARIABLE = "GEMINI_API_KEY"
 MIN_KEY_LENGTH = 20
+MODEL_VARIABLE = "LIVE_PROVIDER_MODEL"
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 _PLACEHOLDER_MARKERS = ("example", "changeme", "placeholder", "test-key", "xxx")
 
@@ -26,7 +32,7 @@ class LiveConfig:
 
     enabled: bool
     provider: str = "google-genai"
-    model: str = "gemini-2.0-flash"
+    model: str = DEFAULT_MODEL
     temperature: str = "provider-default (unpinned)"
     max_output_tokens: str = "provider-default (unpinned)"
     reason: str = ""
@@ -53,10 +59,13 @@ def collection_status(environment: dict[str, str] | None = None) -> CollectionSt
 
 def resolve_config(environment: dict[str, str] | None = None) -> LiveConfig:
     """Build the pinned configuration (raises when collection is off)."""
-    status = collection_status(environment)
+    env = environment if environment is not None else dict(os.environ)
+    status = collection_status(env)
     if not status.will_collect:
         raise CollectionNotEnabledError(status.reason)
-    return LiveConfig(enabled=True, reason=status.reason)
+    raw_model = (env.get(MODEL_VARIABLE) or "").strip()
+    model = raw_model if raw_model else DEFAULT_MODEL
+    return LiveConfig(enabled=True, model=model, reason=status.reason)
 
 
 class CollectionNotEnabledError(Exception):
@@ -64,7 +73,9 @@ class CollectionNotEnabledError(Exception):
 
 
 __all__ = [
+    "DEFAULT_MODEL",
     "KEY_VARIABLE",
+    "MODEL_VARIABLE",
     "OPT_IN_VALUE",
     "OPT_IN_VARIABLE",
     "CollectionNotEnabledError",
