@@ -31,9 +31,25 @@ def evaluate_attempts(
     citation_values: list[float] = [
         float(value) for r in replays if (value := r.get("citation_validity")) is not None
     ]
+    # Persisted per-attempt diagnostics (M19 debugging): the ONLY provider
+    # error text allowed here is the already-sanitized, already-bounded
+    # ``detail`` produced upstream (sanitize_provider_error output for
+    # provider failures/timeouts; short accounting notes otherwise).
+    # Order follows the input attempts (frozen prompt order); keys are
+    # fixed to question_id/outcome/detail — no prompts, evidence,
+    # bodies, keys, tokens, or traces.
+    diagnostics = [
+        {
+            "question_id": str(attempt.get("question_id", "")),
+            "outcome": str(attempt.get("outcome", "unknown")),
+            "detail": str(attempt.get("detail", ""))[:500],
+        }
+        for attempt in attempts
+    ]
     return {
         "attempts_total": total,
         "attempts_by_outcome": dict(sorted(by_outcome.items())),
+        "attempt_diagnostics": diagnostics,
         "validator_acceptance_rate": (accepted / evaluated) if evaluated else None,
         "citation_validity_mean": (
             sum(citation_values) / len(citation_values) if citation_values else None
