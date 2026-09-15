@@ -236,7 +236,31 @@ def _live_results(live_dir: Path, dataset: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_package(dataset: dict[str, Any], live_dir: Path) -> dict[str, object]:
+def _human_review_status(pending_rows: int, review_text: str | None) -> str:
+    """Human-review status: completed judgments win over the CSV state.
+
+    ``review_text`` is the content of a completed human-review document
+    when supplied; otherwise the quarantine CSV pending count decides.
+    The quarantine CSV is never the authoritative completed record.
+    """
+    if review_text is not None:
+        from src.research.live_review import review_completion
+
+        completed, total = review_completion(review_text)
+        if total > 0 and completed == total:
+            return (
+                f"COMPLETE ({completed}/{total} human-reviewed; authoritative "
+                "record: human-review.md; quarantine review CSV unchanged)"
+            )
+        return f"PARTIAL ({completed}/{total} human-reviewed)"
+    return "PENDING HUMAN REVIEW" if pending_rows else "no review rows"
+
+
+def build_package(
+    dataset: dict[str, Any],
+    live_dir: Path,
+    human_review_text: str | None = None,
+) -> dict[str, object]:
     """Assemble every results file (pure; writing happens in main)."""
     deterministic = _deterministic_results(dataset)
     live = _live_results(live_dir, dataset)
@@ -386,9 +410,7 @@ def build_package(dataset: dict[str, Any], live_dir: Path) -> dict[str, object]:
             "transcripts_stored": live["transcript_count"],
             "configuration": "provider defaults (temperature unpinned)",
         },
-        "human_review": (
-            "PENDING HUMAN REVIEW" if live["manual_review_pending_rows"] else "no review rows"
-        ),
+        "human_review": _human_review_status(live["manual_review_pending_rows"], human_review_text),
         "limitations": limitations,
         "supported_claims": supported_claims,
         "unsupported_claims": unsupported_claims,
@@ -427,6 +449,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default=str(DEFAULT_DATASET))
     parser.add_argument("--live-dir", default=str(DEFAULT_LIVE_DIR))
+    parser.add_argument(
+        "--human-review",
+        default=None,
+        help="Optional completed human-review document; sets the review status.",
+    )
     parser.add_argument("--out", default="research-results")
     args = parser.parse_args(argv)
 
@@ -443,7 +470,12 @@ def main(argv: list[str] | None = None) -> int:
     live_dir = Path(args.live_dir)
     out_dir = Path(args.out)
     try:
-        package = build_package(dataset, live_dir)
+        review_text = Path(args.human_review).read_text() if args.human_review else None
+    except OSError as exc:
+        print(f"error: cannot load human review: {exc}", file=sys.stderr)
+        return 2
+    try:
+        package = build_package(dataset, live_dir, human_review_text=review_text)
     except IntegrityError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

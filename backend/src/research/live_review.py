@@ -70,4 +70,32 @@ def review_sheet_csv(rows: list[dict[str, str]]) -> str:
     return buffer.getvalue()
 
 
-__all__ = ["REVIEW_COLUMNS", "review_sheet_csv", "review_sheet_rows"]
+def review_completion(text: str) -> tuple[int, int]:
+    """Count completed transcript sections in a human-review document.
+
+    Returns ``(completed, total)`` where a ``## `` section counts as
+    completed when its reviewer/date line carries a real judgment
+    instead of the pending marker. Pure parsing only; entering
+    judgments is always a human act.
+    """
+    total = 0
+    completed = 0
+    in_section = False
+    section_done = False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            if in_section:
+                total += 1
+                completed += 1 if section_done else 0
+            in_section = True
+            section_done = False
+        elif in_section and line.startswith("- Reviewer/date:"):
+            if "PENDING" not in line:
+                section_done = True
+    if in_section:
+        total += 1
+        completed += 1 if section_done else 0
+    return completed, total
+
+
+__all__ = ["REVIEW_COLUMNS", "review_completion", "review_sheet_csv", "review_sheet_rows"]

@@ -138,6 +138,36 @@ def test_builder_deterministic_bytes(tmp_path: pathlib.Path) -> None:
     assert first == second
 
 
+def test_review_completion_counts_sections(tmp_path: pathlib.Path) -> None:
+    from src.research.live_review import review_completion
+
+    assert review_completion("") == (0, 0)
+    assert review_completion("## q01 (f)\n- Reviewer/date: PENDING HUMAN REVIEW\n") == (0, 1)
+    assert review_completion("## q01 (f)\n- Reviewer/date: Karl / today\n") == (1, 1)
+
+
+def test_completed_review_updates_narrative(tmp_path: pathlib.Path) -> None:
+    results_dir = _make_inputs(tmp_path)
+    review = (
+        "## q01 (f)\n- Human usefulness assessment: Moderately useful\n"
+        "- Reviewer/date: Karl / today\n"
+        "## q02 (f)\n- Human usefulness assessment: Moderately useful\n"
+        "- Reviewer/date: Karl / today\n"
+    )
+    files = defense.build_package(results_dir, human_review_text=review)
+    assert "Moderately useful" in files["discussion.md"]
+    assert "review pending" not in files["discussion.md"]
+    assert "broader human evaluation" in files["conclusion.md"]
+    assert "human usefulness review," not in files["defense-questions.md"]
+
+
+def test_absent_review_keeps_pending_wording(tmp_path: pathlib.Path) -> None:
+    results_dir = _make_inputs(tmp_path)
+    files = defense.build_package(results_dir)
+    assert "review pending" in files["discussion.md"]
+    assert files["discussion.md"].count("Moderately useful") == 0
+
+
 def test_completed_review_preserved_on_rebuild(tmp_path: pathlib.Path) -> None:
     """A completed human review is never overwritten by the template."""
     results_dir = _make_inputs(tmp_path)

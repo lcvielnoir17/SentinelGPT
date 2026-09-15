@@ -117,8 +117,38 @@ def _markdown_table(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build_package(results_dir: Path) -> dict[str, str]:
+def _review_state(review_text: str | None) -> tuple[bool, str, str]:
+    """Review completeness plus the recorded usefulness verdicts.
+
+    Returns ``(complete, usefulness_note, status_note)`` read from the
+    supplied review document only — nothing is inferred when no review
+    is supplied. Individual judgments always live in human-review.md.
+    """
+    if review_text is None:
+        return False, "", "review pending"
+    from src.research.live_review import review_completion
+
+    completed, total = review_completion(review_text)
+    if total == 0 or completed != total:
+        return False, "", f"review pending ({completed}/{total} recorded)"
+    usefulness = sorted(
+        {
+            line.split(":", 1)[1].strip()
+            for line in review_text.splitlines()
+            if line.startswith("- Human usefulness assessment:")
+        }
+    )
+    verdict = (
+        f'"{usefulness[0]}" across all {total} stored transcripts'
+        if len(usefulness) == 1
+        else "mixed across stored transcripts"
+    )
+    return True, verdict, f"recorded ({completed}/{total} human-reviewed)"
+
+
+def build_package(results_dir: Path, human_review_text: str | None = None) -> dict[str, str]:
     """Render every package file (pure; writing happens in main)."""
+    reviewed, usefulness_note, _status_note = _review_state(human_review_text)
     tables = _read_json(results_dir / "research-tables.json")
     combined = _read_json(results_dir / "combined-summary.json")
     deterministic = _read_json(results_dir / "deterministic-results.json")
@@ -325,7 +355,11 @@ def build_package(results_dir: Path) -> dict[str, str]:
         "## What remains unknown\n"
         "Generalization to live targets, model behavior at larger samples, "
         "adversarial robustness (unmeasured — provider failures), and "
-        "human-judged usefulness (review pending).\n"
+        + (
+            f"human-judged usefulness beyond the completed review ({usefulness_note}).\n"
+            if reviewed
+            else "human-judged usefulness (review pending).\n"
+        )
     )
     files["limitations.md"] = "# Limitations\n\n" + "".join(
         f"- {item}\n" for item in combined["limitations"]
@@ -340,7 +374,12 @@ def build_package(results_dir: Path) -> dict[str, str]:
         "machinery works on genuine provider output. These results do not "
         "establish generalization to live-world targets, model accuracy, "
         "or operational superiority; those require larger samples, live "
-        "targets, completed adversarial coverage, and human review.\n"
+        "targets, completed adversarial coverage, and "
+        + (
+            "broader human evaluation beyond the completed 8-transcript review.\n"
+            if reviewed
+            else "human review.\n"
+        )
     )
     claims = []
     for claim in combined["supported_claims"]:
@@ -432,7 +471,10 @@ def build_package(results_dir: Path) -> dict[str, str]:
         ),
         (
             "What are the limitations?",
-            "See limitations.md (12 items, incl. n=8 live sample and pending review).",
+            f"See limitations.md ({len(combined['limitations'])} items, incl. "
+            "n=8 live sample"
+            + (", completed 8/8 human review" if reviewed else " and pending review")
+            + ").",
         ),
         (
             "How was research bias controlled?",
@@ -458,7 +500,13 @@ def build_package(results_dir: Path) -> dict[str, str]:
         (
             "What remains for future work?",
             "Live targets, larger samples, completed adversarial coverage, "
-            "human usefulness review, quota-independent replication.",
+            + (
+                f"broader human evaluation beyond the completed 8-transcript review "
+                f"({usefulness_note}), "
+                if reviewed
+                else "human usefulness review, "
+            )
+            + "quota-independent replication.",
         ),
     ]
     files["defense-questions.md"] = "# Defense Questions (evidence-based)\n\n" + "".join(
@@ -556,13 +604,23 @@ def build_package(results_dir: Path) -> dict[str, str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results-dir", default=str(DEFAULT_RESULTS_DIR))
+    parser.add_argument(
+        "--human-review",
+        default=None,
+        help="Optional completed human-review document; updates review-status wording.",
+    )
     parser.add_argument("--out", default="research-defense")
     args = parser.parse_args(argv)
 
     results_dir = Path(args.results_dir)
     out_dir = Path(args.out)
     try:
-        files = build_package(results_dir)
+        review_text = Path(args.human_review).read_text() if args.human_review else None
+    except OSError as exc:
+        print(f"error: cannot load human review: {exc}", file=sys.stderr)
+        return 2
+    try:
+        files = build_package(results_dir, human_review_text=review_text)
     except PackageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

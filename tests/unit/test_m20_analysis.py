@@ -156,3 +156,20 @@ def test_main_missing_live_dir_returns_usage_error(tmp_path: pathlib.Path) -> No
     assert (
         analyzer.main(["--live-dir", str(tmp_path / "absent"), "--out", str(tmp_path / "out")]) == 2
     )
+
+
+def test_human_review_flag_sets_completed_status(tmp_path: pathlib.Path) -> None:
+    live_dir = _make_live_dir(tmp_path)
+    review = (
+        "## q01 (f)\n- Reviewer/date: Karl / today\n## q02 (f)\n- Reviewer/date: Karl / today\n"
+    )
+    package = analyzer.build_package(_dataset(), live_dir, human_review_text=review)
+    status = package["combined-summary.json"]["human_review"]
+    assert status.startswith("COMPLETE (2/2")
+    assert "quarantine review CSV unchanged" in status
+
+
+def test_absent_review_keeps_pending_status(tmp_path: pathlib.Path) -> None:
+    live_dir = _make_live_dir(tmp_path)
+    package = analyzer.build_package(_dataset(), live_dir)
+    assert package["combined-summary.json"]["human_review"] == "PENDING HUMAN REVIEW"
