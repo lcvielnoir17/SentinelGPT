@@ -264,3 +264,18 @@ class FeatureDisabledError(DomainError):
     status_code = 503
     code = "FEATURE_DISABLED"
     message = "This feature is not enabled on this deployment."
+
+
+class AuthRateLimitedError(DomainError):
+    """Too many password authentication attempts in the current window (429).
+
+    Per-email throttle against online guessing; fails open when the
+    throttle backend is unreachable (availability over throttling),
+    and reveals nothing about account existence (same 429 for any
+    supplied address once its budget is spent).
+    """
+
+    status_code = 429
+    code = "RATE_LIMITED"
+    message = "Too many login attempts; wait a minute and try again."
+    retry_after: int | None = 60

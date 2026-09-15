@@ -72,7 +72,7 @@ async def _deliver(
         except Exception as exc:  # noqa: BLE001 - terminal honesty, never strand pending
             try:
                 row = await repository.get_delivery(row_id)
-                if row is not None and row.status == "pending":
+                if row is not None and row.status in ("pending", "sending"):
                     row.status = "failed"
                     row.last_error = f"worker_error:{type(exc).__name__}"[:500]
                     await session.commit()
@@ -96,10 +96,12 @@ async def _deliver_attempt(
         decrypt_secret,
     )
 
-    row = await repository.get_delivery(row_id)
-    if row is None or row.status != "pending":
+    row = await repository.claim_delivery(row_id)
+    if row is None:
         return {"delivery_id": delivery_id, "status": "ignored"}
     if row.next_retry_at is not None and row.next_retry_at > datetime.now(UTC):
+        await repository.release_claim(row_id)
+        await session.commit()
         return {"delivery_id": delivery_id, "status": "not-due"}
 
     webhook = await session.get(Webhook, row.webhook_id)
@@ -135,6 +137,7 @@ async def _deliver_attempt(
     if outcome.retryable and row.attempts < MAX_ATTEMPTS:
         delay = RETRY_DELAYS_SECONDS[min(row.attempts - 1, len(RETRY_DELAYS_SECONDS) - 1)]
         row.next_retry_at = datetime.now(UTC) + timedelta(seconds=delay)
+        row.status = "pending"
         await session.commit()
         await retry(delivery_id, delay)
         return {"delivery_id": delivery_id, "status": "retry-scheduled"}

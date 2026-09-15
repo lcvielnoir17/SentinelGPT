@@ -193,6 +193,21 @@ class FakeRepo:
     async def status_code_by_id(self) -> dict[int, str]:
         return {i: c for c, i in STATUS_IDS.items()}
 
+    async def list_stale_running(self, *, older_than: object, limit: int = 100) -> list:
+        # Mirrors production: RUNNING with started_at strictly before the
+        # cutoff, oldest first, bounded. Rows without started_at are never
+        # stale (staleness cannot be proven).
+        running = STATUS_IDS["RUNNING"]
+        rows = [
+            r
+            for r in self.rows.values()
+            if getattr(r, "status_id", None) == running
+            and getattr(r, "started_at", None) is not None
+            and r.started_at < older_than
+        ]
+        rows.sort(key=lambda r: r.started_at)
+        return rows[:limit]
+
     async def profile_code_by_id(self) -> dict[int, str]:
         return {1: "quick-check", 2: "standard", 3: "full-assessment"}
 

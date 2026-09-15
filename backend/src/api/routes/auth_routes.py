@@ -48,6 +48,7 @@ from src.config.constants import (
 )
 from src.config.settings import Settings, get_settings
 from src.domain.errors import (
+    AuthRateLimitedError,
     FeatureDisabledError,
     NotAuthenticatedError,
     RefreshCsrfHeaderMissingError,
@@ -242,6 +243,26 @@ def _mfa_verify_limiter() -> Any:
     )
 
 
+def _login_limiter() -> Any:
+    """Per-email atomic throttle for password auth attempts (fail-open)."""
+    from src.domain.scans.rate_limit import RedisAtomicRateLimiter
+    from src.infrastructure.cache.redis_client import get_redis_client
+
+    settings = get_settings()
+    return RedisAtomicRateLimiter(
+        get_redis_client(),
+        key_prefix="sgpt:auth:login",
+        limit=settings.auth_login_limit_per_minute,
+        window_seconds=60,
+    )
+
+
+async def _check_login_throttle(email: str) -> None:
+    """Spend one password-auth attempt for the address (429 when spent)."""
+    if not await _login_limiter().try_admit(email.strip().lower()):
+        raise AuthRateLimitedError()
+
+
 def _mfa_service(session: AsyncSession) -> Any:
     from src.domain.mfa.service import MfaService
 
@@ -313,6 +334,7 @@ def _firebase_verifier(project_id: str) -> FirebaseTokenVerifier:
 )
 async def register(payload: RegisterRequest, session: SessionDep) -> UserCreatedResponse:
     """Register a new account; duplicate emails yield a 409 CONFLICT envelope."""
+    await _check_login_throttle(payload.email)
     service = UserService(session)
     account = await service.register_user(payload.email, payload.password)
     return UserCreatedResponse(id=account.id, email=account.email, created_at=account.created_at)
@@ -337,6 +359,8 @@ async def register(payload: RegisterRequest, session: SessionDep) -> UserCreated
 async def login(payload: LoginRequest, session: SessionDep, response: Response) -> Any:
     service = UserService(session)
     settings = get_settings()
+    # Throttle first: identical 429 for any address once spent (no oracle).
+    await _check_login_throttle(payload.email)
     # Unknown-email and wrong-password raise the identical InvalidCredentialsError
     # (401 UNAUTHENTICATED) — no user-enumeration oracle (Chapter 5, Section 2).
     account = await service.authenticate(payload.email, payload.password)

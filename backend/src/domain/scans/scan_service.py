@@ -2028,6 +2028,61 @@ class ScanService:
         assert refreshed is not None
         return await self._details(refreshed)
 
+    async def reap_stale_running_scans(
+        self,
+        *,
+        stale_after_seconds: int = 1800,
+        limit: int = 100,
+        now: datetime | None = None,
+    ) -> int:
+        """Reap RUNNING scans whose worker never returned (fail-closed).
+
+        A hard worker loss (SIGKILL at the task time limit, OOM-kill,
+        eviction) runs no Python handler, so without reaping the row
+        would strand in RUNNING and permanently consume the owner's
+        running-scan quota. Rows older than the cutoff move
+        RUNNING → REJECTED with an audit event; the conditional
+        transition keeps this safe against a still-running worker
+        racing the reaper (loser simply reaps nothing).
+        """
+        from src.domain.audit.audit_service import (
+            ACTION_SCAN_STATE_TRANSITION,
+            AuditService,
+        )
+        from src.infrastructure.database.repositories.scan_repository import (
+            ScanRepository,
+        )
+
+        moment = now or datetime.now(UTC)
+        cutoff = moment - timedelta(seconds=stale_after_seconds)
+        repository = ScanRepository(self._session)
+        status_ids = await repository.status_ids_by_code()
+        stale = await repository.list_stale_running(older_than=cutoff, limit=limit)
+        reaped = 0
+        for scan in stale:
+            moved = await repository.try_transition(
+                scan.id,
+                from_status_id=status_ids[SCAN_STATUS_RUNNING_CODE],
+                to_status_id=status_ids[SCAN_STATUS_REJECTED_CODE],
+                set_completed_at=moment,
+            )
+            if not moved:
+                continue
+            await AuditService(self._session).record(
+                action_code=ACTION_SCAN_STATE_TRANSITION,
+                entity_type="scan",
+                entity_id=scan.id,
+                metadata_json={
+                    "from": SCAN_STATUS_RUNNING_CODE,
+                    "to": SCAN_STATUS_REJECTED_CODE,
+                    "reason": "worker loss suspected (stale RUNNING reaped)",
+                    "ownerUserId": str(scan.initiated_by_user_id),
+                },
+                actor_user_id=None,
+            )
+            reaped += 1
+        return reaped
+
     # ------------------------------------------------------------------ #
     # Execution orchestration (background job entry point)               #
     # ------------------------------------------------------------------ #
@@ -2142,6 +2197,52 @@ class ScanService:
             ):
                 # Lost a race after recording REJECTED (e.g. cancel won):
                 # surface it so the worker reaps whatever state actually won.
+                raise InvalidScanStateError()
+            await self._session.commit()
+            rejected_at = datetime.now(UTC)
+            events.append(
+                scan_event(
+                    event_type=SCAN_FAILED,
+                    scan_id=scan.id,
+                    target_id=scan.target_id,
+                    status=SCAN_STATUS_REJECTED_CODE,
+                    occurred_at=rejected_at,
+                )
+            )
+            return events
+
+        # ---- target-archive RE-CHECK at execution time ----------------------
+        # A target archived after its scan was queued must not be scanned:
+        # archiving is the owner's withdrawal of that target.
+        from src.infrastructure.database.repositories.target_repository import (
+            TargetRepository,
+        )
+
+        queued_target = await TargetRepository(self._session).get_by_id(scan.target_id)
+        if queued_target is not None and queued_target.is_archived:
+            from src.domain.audit.audit_service import (
+                ACTION_SCAN_STATE_TRANSITION,
+                AuditService,
+            )
+
+            await AuditService(self._session).record(
+                action_code=ACTION_SCAN_STATE_TRANSITION,
+                entity_type="scan",
+                entity_id=scan.id,
+                metadata_json={
+                    "from": SCAN_STATUS_QUEUED_CODE,
+                    "to": SCAN_STATUS_REJECTED_CODE,
+                    "reason": "target archived after queueing",
+                    "ownerUserId": str(scan.initiated_by_user_id),
+                },
+                actor_user_id=None,
+            )
+            if not await repository.try_transition(
+                scan.id,
+                from_status_id=status_ids[SCAN_STATUS_RUNNING_CODE],
+                to_status_id=status_ids[SCAN_STATUS_REJECTED_CODE],
+                set_completed_at=datetime.now(UTC),
+            ):
                 raise InvalidScanStateError()
             await self._session.commit()
             rejected_at = datetime.now(UTC)

@@ -167,6 +167,19 @@ async def test_revoked_authorization_mid_queue_rejects_scan(env, mocker) -> None
     assert env.exec_repo.findings_added == 0
 
 
+async def test_archived_target_mid_queue_rejects_scan(env) -> None:  # type: ignore[no-untyped-def]
+    """Target archived between QUEUED and RUNNING ⇒ REJECTED, never executed."""
+    service = ScanService(env.session, env.owner)
+    details = await service.create_scan(target_id=env.target.id)
+    env.target.is_archived = True
+
+    await service.execute_scan_job(details.id, pipeline=OkPipeline(_analysis_result()))
+
+    row = env.repo.rows[details.id]
+    assert row.status_code == "REJECTED"
+    assert env.exec_repo.findings_added == 0
+
+
 def test_duplicate_execution_prevented_by_optimistic_transition(env) -> None:
     """Second claimant using the stale from-status loses the race."""
     row = FakeRow(user_id=env.owner.id, status_code="RUNNING")

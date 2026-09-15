@@ -18,7 +18,7 @@ from src.infrastructure.database.models.lookup_models import (
     ScanStatus,
     SeverityLevel,
 )
-from src.infrastructure.database.models.mfa_models import MfaRecoveryCode
+from src.infrastructure.database.models.mfa_models import MfaRecoveryCode, MfaTotpUse
 from src.infrastructure.database.models.refresh_session_models import RefreshSession
 from src.infrastructure.database.models.scan_models import (
     AuthorizationAttestation,
@@ -40,6 +40,7 @@ __all__ = [
     "Base",
     "User",
     "MfaRecoveryCode",
+    "MfaTotpUse",
     "Target",
     "TargetTechnology",
     "RefreshSession",

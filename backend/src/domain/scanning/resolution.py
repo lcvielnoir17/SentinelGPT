@@ -63,6 +63,11 @@ class ScanTargetResolutionService:
     def ensure_still_valid(self, binding: ValidatedTargetBinding) -> None:
         """Re-resolve and compare against the binding (anti-rebinding check).
 
+        Reserved helper, not on the live execution path: connections use
+        the pinned address literal inside the kernel sandbox allow-list,
+        and never re-resolve at connect time, so there is no window for
+        this check to guard today. Keep it for defense in depth and call
+        it explicitly if any future path re-resolves before exchange.
         The connection-time address set must equal the validated set. Any
         drift — including a public->private change on any single record — is
         treated as rebinding and refused. Authoritative network-level

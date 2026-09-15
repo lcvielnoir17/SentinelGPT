@@ -59,6 +59,7 @@ class FakeSession:
     def __init__(self, user: SimpleNamespace) -> None:
         self.user = user
         self.codes: list[SimpleNamespace] = []
+        self.totp_steps: set[int] = set()
         self.commits = 0
 
     async def get(self, model: object, key: object) -> object | None:
@@ -67,10 +68,34 @@ class FakeSession:
         return None
 
     def add(self, row: object) -> None:
+        from sqlalchemy.exc import IntegrityError
+
+        if getattr(row, "__tablename__", "") == "mfa_totp_use":
+            if row.time_step in self.totp_steps:
+                raise IntegrityError("INSERT", {}, Exception("duplicate (user, step)"))
+            self.totp_steps.add(row.time_step)
+            return
         self.codes.append(row)
 
     async def flush(self) -> None:
         return None
+
+    def begin_nested(self):  # type: ignore[no-untyped-def]
+        from contextlib import asynccontextmanager
+
+        session = self
+
+        @asynccontextmanager
+        async def _nested():  # type: ignore[no-untyped-def]
+            codes, steps = list(session.codes), set(session.totp_steps)
+            try:
+                yield session
+            except Exception:
+                session.codes = codes
+                session.totp_steps = steps
+                raise
+
+        return _nested()
 
     async def commit(self) -> None:
         self.commits += 1
@@ -273,6 +298,31 @@ async def test_challenge_totp_success(world) -> None:  # type: ignore[no-untyped
     assert _codes(world) == ["MFA_CHALLENGE_SUCCESS"]
 
 
+async def test_challenge_totp_replay_rejected(world) -> None:  # type: ignore[no-untyped-def]
+    """The same TOTP code verifies once; immediate replay fails closed."""
+    from src.domain.mfa.totp import current_code
+
+    raw = await _enabled_world(world)
+    code = current_code(raw)
+    await world.service.verify_challenge(USER_ID, code)
+    with pytest.raises(NotAuthenticatedError):
+        await world.service.verify_challenge(USER_ID, code)
+    assert _codes(world) == ["MFA_CHALLENGE_SUCCESS", "MFA_CHALLENGE_FAILURE"]
+
+
+async def test_matching_step_names_counter() -> None:
+    from datetime import timedelta
+
+    from src.domain.mfa.totp import code_at, generate_secret, matching_step
+
+    secret = generate_secret()
+    now = datetime.now(UTC)
+    base = int(now.timestamp()) // 30
+    assert matching_step(secret, code_at(secret, now), now) == base
+    assert matching_step(secret, code_at(secret, now - timedelta(seconds=30)), now) == base - 1
+    assert matching_step(secret, "000000", now) is None
+
+
 async def test_challenge_wrong_code_is_401(world) -> None:  # type: ignore[no-untyped-def]
     await _enabled_world(world)
     with pytest.raises(NotAuthenticatedError):
@@ -442,9 +492,14 @@ async def test_disable_with_recovery_code(world, monkeypatch) -> None:  # type: 
 
 
 async def test_regenerate_replaces_codes(world) -> None:  # type: ignore[no-untyped-def]
-    await _enabled_world(world)
+    from datetime import UTC, datetime, timedelta
+
+    from src.domain.mfa.totp import code_at
+
+    raw = await _enabled_world(world)
     first = await world.service.regenerate_recovery_codes(
-        SimpleNamespace(id=USER_ID, email=EMAIL), totp_code=_current(world)
+        SimpleNamespace(id=USER_ID, email=EMAIL),
+        totp_code=code_at(raw, datetime.now(UTC) - timedelta(seconds=30)),
     )
     assert len(first.codes) == 10
     second = await world.service.regenerate_recovery_codes(
@@ -454,6 +509,18 @@ async def test_regenerate_replaces_codes(world) -> None:  # type: ignore[no-unty
     assert _codes(world)[-2:] == ["MFA_RECOVERY_REGENERATED", "MFA_RECOVERY_REGENERATED"]
     with pytest.raises(NotAuthenticatedError):
         await world.service.verify_challenge(USER_ID, first.codes[0])  # old set dead
+
+
+async def test_regenerate_same_code_rejected_as_replay(world) -> None:  # type: ignore[no-untyped-def]
+    """Single-use holds for code-protected management operations too."""
+    await _enabled_world(world)
+    await world.service.regenerate_recovery_codes(
+        SimpleNamespace(id=USER_ID, email=EMAIL), totp_code=_current(world)
+    )
+    with pytest.raises(NotAuthenticatedError):
+        await world.service.regenerate_recovery_codes(
+            SimpleNamespace(id=USER_ID, email=EMAIL), totp_code=_current(world)
+        )
 
 
 async def test_regenerate_wrong_totp_is_401(world) -> None:  # type: ignore[no-untyped-def]
@@ -877,13 +944,14 @@ async def test_audits_carry_no_secrets(http) -> None:  # type: ignore[no-untyped
 # --------------------------------------------------------------------------- #
 
 
-def test_migration_chain_head_is_0018() -> None:
+def test_migration_chain_head_is_0019() -> None:
     from importlib import import_module
 
     chain = {
         "0016": ("0015", "remediation_collaboration"),
         "0017": ("0016", "ci_credentials"),
         "0018": ("0017", "mfa_recovery_codes"),
+        "0019": ("0018", "mfa_totp_replay_guard"),
     }
     for revision, (down, name) in chain.items():
         module = import_module(f"src.infrastructure.database.migrations.versions.{revision}_{name}")
@@ -893,3 +961,4 @@ def test_migration_chain_head_is_0018() -> None:
     from src.infrastructure.database.models import Base
 
     assert "mfa_recovery_code" in Base.metadata.tables
+    assert "mfa_totp_use" in Base.metadata.tables

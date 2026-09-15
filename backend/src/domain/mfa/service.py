@@ -35,7 +35,7 @@ from src.domain.mfa.errors import (
     MfaNotConfiguredError,
     MfaRateLimitedError,
 )
-from src.domain.mfa.totp import generate_secret, provisioning_uri, verify_code
+from src.domain.mfa.totp import generate_secret, matching_step, provisioning_uri, verify_code
 from src.infrastructure.secrets.mfa_box import (
     MfaSecretsNotConfiguredError,
     decrypt_totp_secret,
@@ -176,15 +176,19 @@ class MfaService:
                 secret = decrypt_totp_secret(user.mfa_secret_encrypted)
             except MfaSecretsNotConfiguredError as exc:
                 raise MfaNotConfiguredError() from exc
-            if verify_code(secret, clean):
-                await self._audit_challenge(user_id, success=True)
-                return Account(
-                    id=user.id,
-                    email=user.email,
-                    created_at=user.created_at,
-                    firebase_uid=user.firebase_uid,
-                    mfa_enabled=True,
-                )
+            step = matching_step(secret, clean)
+            if step is not None:
+                if await self._consume_totp_step(user.id, step):
+                    await self._audit_challenge(user_id, success=True)
+                    return Account(
+                        id=user.id,
+                        email=user.email,
+                        created_at=user.created_at,
+                        firebase_uid=user.firebase_uid,
+                        mfa_enabled=True,
+                    )
+                await self._audit_challenge(user_id, success=False)
+                raise NotAuthenticatedError()
         if await self._consume_recovery_code(user.id, clean):
             await self._audit_challenge(user_id, success=True)
             await AuditService(self._session).record(
@@ -227,9 +231,10 @@ class MfaService:
         totp_ok = False
         if row.mfa_secret_encrypted:
             try:
-                totp_ok = verify_code(decrypt_totp_secret(row.mfa_secret_encrypted), clean)
+                step = matching_step(decrypt_totp_secret(row.mfa_secret_encrypted), clean)
             except MfaSecretsNotConfiguredError as exc:
                 raise MfaNotConfiguredError() from exc
+            totp_ok = step is not None and await self._consume_totp_step(user.id, step)
         if not totp_ok and not await self._consume_recovery_code(user.id, clean):
             raise NotAuthenticatedError()
         row.mfa_enabled = False
@@ -257,7 +262,8 @@ class MfaService:
         except MfaSecretsNotConfiguredError as exc:
             raise MfaNotConfiguredError() from exc
         await self._check_limit(user.id)
-        if not verify_code(secret, totp_code.strip()):
+        step = matching_step(secret, totp_code.strip())
+        if step is None or not await self._consume_totp_step(user.id, step):
             raise NotAuthenticatedError()
         codes = await self._replace_recovery_codes(user.id)
         await AuditService(self._session).record(
@@ -314,6 +320,25 @@ class MfaService:
         await self._session.execute(
             delete(MfaRecoveryCode).where(MfaRecoveryCode.user_id == user_id)
         )
+
+    async def _consume_totp_step(self, user_id: uuid.UUID, step: int) -> bool:
+        """Record one TOTP step use; False when already spent (replay).
+
+        The unique (user, step) row is the single-use guard: a racing
+        duplicate loses the insert and fails closed. Only step counters
+        persist — never codes.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        from src.infrastructure.database.models import MfaTotpUse
+
+        try:
+            async with self._session.begin_nested():
+                self._session.add(MfaTotpUse(user_id=user_id, time_step=step))
+                await self._session.flush()
+        except IntegrityError:
+            return False
+        return True
 
     async def _consume_recovery_code(self, user_id: uuid.UUID, code: str) -> bool:
         """Atomically consume one unused code (single-use enforced here).

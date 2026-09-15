@@ -136,6 +136,21 @@ class ScanRepository:
         rows = await self._session.execute(select(ScanStatus.id, ScanStatus.code))
         return {int(id_): str(code) for id_, code in rows}
 
+    async def list_stale_running(self, *, older_than: datetime, limit: int = 100) -> list[Scan]:
+        """RUNNING rows started before the cutoff (hard worker-loss candidates).
+
+        Rows without ``started_at`` are never returned: staleness cannot
+        be proven for them, so they are left for an operator.
+        """
+        ids = await self.status_ids_by_code()
+        rows = await self._session.execute(
+            select(Scan)
+            .where(Scan.status_id == ids["RUNNING"], Scan.started_at < older_than)
+            .order_by(Scan.started_at.asc())
+            .limit(limit)
+        )
+        return list(rows.scalars().all())
+
     async def profile_code_by_id(self) -> dict[int, str]:
         """Profile code per id (one query; avoids per-row lookups in lists)."""
         from src.infrastructure.database.models import ScanProfile
@@ -337,7 +352,10 @@ class ScanEngineExecutionRepository:
 
         Deduplication is by the (fingerprint, target, source, external_ref)
         identity: re-attaching the same advisory never creates a duplicate.
+        A lost insert race resolves to the winner instead of a 500.
         """
+        from sqlalchemy.exc import IntegrityError
+
         from src.infrastructure.database.models import FindingEnrichment
 
         existing = await self._session.execute(
@@ -349,23 +367,36 @@ class ScanEngineExecutionRepository:
             )
         )
         row = existing.scalars().first()
-        if row is not None:
-            return self._enrichment_dto(row)
-        row = FindingEnrichment(
-            fingerprint=fingerprint,
-            target_id=target_id,
-            source=source,
-            external_ref=external_ref,
-            cve_id=cve_id,
-            cwe_id=cwe_id,
-            cvss_score=cvss_score,
-            cvss_vector=cvss_vector,
-            references=list(references),
-            affected_technology=affected_technology,
-            remediation=remediation,
-        )
-        self._session.add(row)
-        await self._session.flush()
+        if row is None:
+            row = FindingEnrichment(
+                fingerprint=fingerprint,
+                target_id=target_id,
+                source=source,
+                external_ref=external_ref,
+                cve_id=cve_id,
+                cwe_id=cwe_id,
+                cvss_score=cvss_score,
+                cvss_vector=cvss_vector,
+                references=list(references),
+                affected_technology=affected_technology,
+                remediation=remediation,
+            )
+            try:
+                async with self._session.begin_nested():
+                    self._session.add(row)
+                    await self._session.flush()
+            except IntegrityError:
+                reselected = await self._session.execute(
+                    select(FindingEnrichment).where(
+                        FindingEnrichment.fingerprint == fingerprint,
+                        FindingEnrichment.target_id == target_id,
+                        FindingEnrichment.source == source,
+                        FindingEnrichment.external_ref == external_ref,
+                    )
+                )
+                row = reselected.scalars().first()
+                if row is None:
+                    raise
         return self._enrichment_dto(row)
 
     async def get_remediation(
@@ -405,8 +436,11 @@ class ScanEngineExecutionRepository:
         explicit ``*_set`` flags arrive (absent keys leave stored values
         alone); setting them to None clears. ``assigned_by``/``assigned_at``
         follow the assignee: stamped on (re)assign, cleared on unassign.
+        A lost insert race resolves onto the winner instead of a 500.
         """
         from datetime import UTC, datetime
+
+        from sqlalchemy.exc import IntegrityError
 
         from src.infrastructure.database.models import FindingRemediation
 
@@ -418,36 +452,48 @@ class ScanEngineExecutionRepository:
         )
         row = existing.scalars().first()
         now = datetime.now(UTC)
-        if row is not None:
-            row.status = status
-            row.notes = notes
-            row.updated_by_user_id = updated_by_user_id
-            if assignee_set:
-                row.assignee_user_id = assignee_user_id
-                if assignee_user_id is None:
-                    row.assigned_at = None
-                    row.assigned_by_user_id = None
-                else:
-                    row.assigned_at = now
-                    row.assigned_by_user_id = assigned_by_user_id
-            if due_at_set:
-                row.due_at = due_at
-            await self._session.flush()
-            return self._remediation_dto(row)
-        row = FindingRemediation(
-            fingerprint=fingerprint,
-            target_id=target_id,
-            status=status,
-            notes=notes,
-            updated_by_user_id=updated_by_user_id,
-            assignee_user_id=assignee_user_id if assignee_set else None,
-            assigned_at=now if assignee_set and assignee_user_id is not None else None,
-            assigned_by_user_id=(
-                assigned_by_user_id if assignee_set and assignee_user_id is not None else None
-            ),
-            due_at=due_at if due_at_set else None,
-        )
-        self._session.add(row)
+        if row is None:
+            row = FindingRemediation(
+                fingerprint=fingerprint,
+                target_id=target_id,
+                status=status,
+                notes=notes,
+                updated_by_user_id=updated_by_user_id,
+                assignee_user_id=assignee_user_id if assignee_set else None,
+                assigned_at=now if assignee_set and assignee_user_id is not None else None,
+                assigned_by_user_id=(
+                    assigned_by_user_id if assignee_set and assignee_user_id is not None else None
+                ),
+                due_at=due_at if due_at_set else None,
+            )
+            try:
+                async with self._session.begin_nested():
+                    self._session.add(row)
+                    await self._session.flush()
+                return self._remediation_dto(row)
+            except IntegrityError:
+                reselected = await self._session.execute(
+                    select(FindingRemediation).where(
+                        FindingRemediation.fingerprint == fingerprint,
+                        FindingRemediation.target_id == target_id,
+                    )
+                )
+                row = reselected.scalars().first()
+                if row is None:
+                    raise
+        row.status = status
+        row.notes = notes
+        row.updated_by_user_id = updated_by_user_id
+        if assignee_set:
+            row.assignee_user_id = assignee_user_id
+            if assignee_user_id is None:
+                row.assigned_at = None
+                row.assigned_by_user_id = None
+            else:
+                row.assigned_at = now
+                row.assigned_by_user_id = assigned_by_user_id
+        if due_at_set:
+            row.due_at = due_at
         await self._session.flush()
         return self._remediation_dto(row)
 

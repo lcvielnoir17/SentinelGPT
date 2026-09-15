@@ -18,11 +18,13 @@ Security notes:
   the module.
 * The default broker and result backend are read from the existing
   ``Settings`` (no env knobs added), keeping secrets management centralized.
-* ``task_acks_late=True`` is OFF by default: tasks acknowledge after the
-  successful database commit. A crash mid-execution is mapped to a
-  terminal scan state by ``scan_tasks._mark_scan_rejected`` (idempotent
-  QUEUED/RUNNING → REJECTED; already-terminal scans are a no-op), so a
-  stranded ``RUNNING`` row is reaped rather than left for an operator.
+ * ``task_acks_late`` stays False: messages are acknowledged on
+  receipt, so a hard worker loss (SIGKILL at the time limit, OOM-kill,
+  eviction) runs no Python handler at all. In-process failures are
+  mapped to a terminal scan state by ``scan_tasks._mark_scan_rejected``
+  (idempotent QUEUED/RUNNING → REJECTED); hard losses are reaped by the
+  ``reap_stale_running_scans_task`` beat below instead of stranding
+  ``RUNNING`` rows against quota.
 """
 
 from __future__ import annotations
@@ -135,6 +137,10 @@ def _build_celery() -> Celery:
             "run-due-schedules-every-minute": {
                 "task": "src.workers.schedule_tasks.run_due_schedules_task",
                 "schedule": 60.0,
+            },
+            "reap-stale-running-scans": {
+                "task": "src.workers.scan_tasks.reap_stale_running_scans_task",
+                "schedule": 300.0,
             },
         },
         task_time_limit=900,

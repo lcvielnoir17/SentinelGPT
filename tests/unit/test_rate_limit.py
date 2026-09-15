@@ -22,6 +22,7 @@ import pytest
 
 from src.domain.conversations import rate_limit as rate_limit_module
 from src.domain.conversations.rate_limit import WINDOW_SECONDS, RedisFixedWindowLimiter
+from src.domain.scans.rate_limit import RedisAtomicRateLimiter
 
 USER_1 = "11111111-1111-1111-1111-111111111111"
 USER_2 = "22222222-2222-2222-2222-222222222222"
@@ -137,3 +138,39 @@ async def test_limit_boundary_is_exact(limit: int) -> None:
     limiter = _limiter(FakeRedis(), limit=limit)
     results = [await limiter.try_admit(USER_1) for _ in range(limit + 1)]
     assert results == [True] * limit + [False]
+
+
+class FakeAtomicRedis(FakeRedis):
+    """Adds EVAL-based atomic increment for the Lua limiter."""
+
+    async def eval(self, script: str, numkeys: int, key: str, window: int) -> int:  # type: ignore[no-untyped-def]
+        if self.broken:
+            raise ConnectionError("redis down")
+        assert "INCR" in script and numkeys == 1
+        self.counts[key] = self.counts.get(key, 0) + 1
+        if self.counts[key] == 1:
+            self.expirations[key] = window
+        return self.counts[key]
+
+
+async def test_atomic_limiter_admits_to_limit_then_rejects() -> None:
+    limiter = RedisAtomicRateLimiter(
+        FakeAtomicRedis(), key_prefix="sgpt:test", limit=2, window_seconds=60
+    )
+    assert [await limiter.try_admit("a@x.com") for _ in range(3)] == [True, True, False]
+
+
+async def test_atomic_limiter_isolates_scopes() -> None:
+    limiter = RedisAtomicRateLimiter(
+        FakeAtomicRedis(), key_prefix="sgpt:test", limit=1, window_seconds=60
+    )
+    assert await limiter.try_admit("a@x.com") is True
+    assert await limiter.try_admit("b@x.com") is True
+    assert await limiter.try_admit("a@x.com") is False
+
+
+async def test_atomic_limiter_fails_open_when_redis_down() -> None:
+    limiter = RedisAtomicRateLimiter(
+        FakeAtomicRedis(broken=True), key_prefix="sgpt:test", limit=1, window_seconds=60
+    )
+    assert await limiter.try_admit("a@x.com") is True

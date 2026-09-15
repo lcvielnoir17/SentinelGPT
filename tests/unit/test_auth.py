@@ -240,6 +240,43 @@ async def test_login_wrong_password_identical_to_unknown_email(
     assert unknown_error["message"] == wrong_pw_error["message"]
 
 
+@pytest.mark.asyncio
+async def test_login_spent_budget_returns_rate_limited(client: AsyncClient, monkeypatch) -> None:
+    """Exhausted per-email budget yields 429 before credential checking."""
+    import src.api.routes.auth_routes as auth_routes
+
+    class _SpentLimiter:
+        async def try_admit(self, _scope: str) -> bool:
+            return False
+
+    monkeypatch.setattr(auth_routes, "_login_limiter", lambda: _SpentLimiter())
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "analyst@example.com", "password": "correct-horse-battery"},
+    )
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "RATE_LIMITED"
+
+
+@pytest.mark.asyncio
+async def test_register_spent_budget_returns_rate_limited(client: AsyncClient, monkeypatch) -> None:
+    import src.api.routes.auth_routes as auth_routes
+
+    class _SpentLimiter:
+        async def try_admit(self, _scope: str) -> bool:
+            return False
+
+    monkeypatch.setattr(auth_routes, "_login_limiter", lambda: _SpentLimiter())
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "new@example.com", "password": "correct-horse-battery"},
+    )
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "RATE_LIMITED"
+
+
 # ---------------------------------------------------------------------------
 # H-01: environment-aware JWT secret safety (settings fail-fast validator)
 # ---------------------------------------------------------------------------

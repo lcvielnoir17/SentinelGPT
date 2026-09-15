@@ -112,6 +112,10 @@ class Settings(BaseSettings):
         default=10,
         description="Per-user window for MFA code verification attempts",
     )
+    auth_login_limit_per_minute: int = Field(
+        default=10,
+        description="Per-email window for password login/register attempts (fail-open)",
+    )
     investigation_limit_per_minute: int = Field(
         default=12,
         description="Per-user window for AI investigation queries",

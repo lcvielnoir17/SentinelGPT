@@ -216,6 +216,18 @@ def world(monkeypatch, fernet_key, no_dns):  # type: ignore[no-untyped-def]
     async def fake_get_delivery(_self: object, did: uuid.UUID):
         return session.deliveries.get(did)
 
+    async def fake_claim_delivery(_self: object, did: uuid.UUID):
+        row = session.deliveries.get(did)
+        if row is None or row.status != "pending":
+            return None
+        row.status = "sending"
+        return row
+
+    async def fake_release_claim(_self: object, did: uuid.UUID, *, to_status: str = "pending"):
+        row = session.deliveries.get(did)
+        if row is not None and row.status == "sending":
+            row.status = to_status
+
     async def fake_list_deliveries(_self: object, wid: uuid.UUID, *, limit: int):
         rows = [r for r in session.deliveries.values() if r.webhook_id == wid]
         rows.sort(key=lambda r: r.created_at, reverse=True)
@@ -252,6 +264,8 @@ def world(monkeypatch, fernet_key, no_dns):  # type: ignore[no-untyped-def]
     mocker_patch(WebhookRepository, "list_enabled_for_owner", fake_list_enabled)
     mocker_patch(WebhookRepository, "cancel_pending", fake_cancel)
     mocker_patch(WebhookRepository, "get_delivery", fake_get_delivery)
+    mocker_patch(WebhookRepository, "claim_delivery", fake_claim_delivery)
+    mocker_patch(WebhookRepository, "release_claim", fake_release_claim)
     mocker_patch(WebhookRepository, "list_deliveries", fake_list_deliveries)
     mocker_patch(WebhookRepository, "record_delivery", fake_record_delivery)
     return types.SimpleNamespace(owner=owner, session=session, audits=audits)
@@ -403,12 +417,37 @@ def test_sign_and_verify_roundtrip() -> None:
     body, headers = build_signed_request(
         secret="s3cret", event_id="ev-1", payload={"a": 1}, timestamp=1700000000
     )
+    signature = headers["X-SentinelGPT-Signature"]
     assert headers["X-SentinelGPT-Event-Id"] == "ev-1"
     assert headers["X-SentinelGPT-Timestamp"] == "1700000000"
-    assert verify_signature("s3cret", body, headers["X-SentinelGPT-Signature"])
-    assert not verify_signature("wrong", body, headers["X-SentinelGPT-Signature"])
-    assert not verify_signature("s3cret", body + b"x", headers["X-SentinelGPT-Signature"])
-    assert not verify_signature("s3cret", body, "bogus")
+    assert verify_signature("s3cret", body, signature, timestamp=1700000000, event_id="ev-1")
+    assert not verify_signature("wrong", body, signature, timestamp=1700000000, event_id="ev-1")
+    assert not verify_signature(
+        "s3cret", body + b"x", signature, timestamp=1700000000, event_id="ev-1"
+    )
+    assert not verify_signature("s3cret", body, "bogus", timestamp=1700000000, event_id="ev-1")
+
+
+def test_signature_binds_timestamp_and_event_id() -> None:
+    """Swapped timestamp/event-id headers must fail verification (no replay)."""
+    from src.domain.webhooks.signing import verify_signature
+    from src.infrastructure.notifications.sender import build_signed_request
+
+    body, headers = build_signed_request(
+        secret="s3cret", event_id="ev-1", payload={"a": 1}, timestamp=1700000000
+    )
+    signature = headers["X-SentinelGPT-Signature"]
+    assert not verify_signature("s3cret", body, signature, timestamp=1700003600, event_id="ev-1")
+    assert not verify_signature("s3cret", body, signature, timestamp=1700000000, event_id="ev-2")
+
+
+def test_timestamp_freshness_window() -> None:
+    from src.domain.webhooks.signing import verify_timestamp_fresh
+
+    assert verify_timestamp_fresh(1700000000, now_unix=1700000000)
+    assert verify_timestamp_fresh(1700000000, now_unix=1700000300)
+    assert not verify_timestamp_fresh(1700000000, now_unix=1700000301)
+    assert not verify_timestamp_fresh(1700000000, now_unix=1699999000)
 
 
 # --------------------------------------------------------------------------- #
@@ -676,6 +715,60 @@ async def test_worker_task_state_machine(world, monkeypatch) -> None:  # type: i
     # Unknown delivery id: no-op, never an error.
     result4 = await tasks._deliver(str(uuid.uuid4()), fake_retry)
     assert result4["status"] == "ignored"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_delivery_sends_once(world, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Two workers racing one delivery: exactly one external POST."""
+    import asyncio
+
+    import src.infrastructure.database.connection as connection
+    import src.infrastructure.notifications.sender as sender_module
+    import src.infrastructure.secrets.secret_box as secret_box
+    import src.workers.webhook_tasks as tasks
+
+    class _Maker:
+        def __call__(self):  # type: ignore[no-untyped-def]
+            from contextlib import asynccontextmanager
+
+            @asynccontextmanager
+            async def _session():  # type: ignore[no-untyped-def]
+                yield world.session
+
+            return _session()
+
+    monkeypatch.setattr(connection, "get_async_sessionmaker", lambda: _Maker())
+
+    sends: list[str] = []
+
+    async def fake_send(**kwargs: object) -> object:  # type: ignore[no-untyped-def]
+        from src.infrastructure.notifications.sender import DeliveryOutcome
+
+        await asyncio.sleep(0)  # force task interleaving at the send point
+        sends.append(str(kwargs.get("event_id")))
+        return DeliveryOutcome(delivered=True, retryable=False, status_code=200)
+
+    async def fake_decrypt(_ciphertext: str) -> str:
+        return "raw-secret"
+
+    monkeypatch.setattr(sender_module, "send_delivery", fake_send)
+    monkeypatch.setattr(secret_box, "decrypt_secret", fake_decrypt)
+
+    hook = _stored_hook(world.session)
+    world.session.webhooks[hook.id] = hook
+    row = _delivery(hook.id, "ev-race", "pending")
+    world.session.deliveries[row.id] = row
+
+    async def fake_retry(delivery_id: str, countdown: int) -> None:
+        raise AssertionError("no retry expected on success")
+
+    first, second = await asyncio.gather(
+        tasks._deliver(str(row.id), fake_retry),
+        tasks._deliver(str(row.id), fake_retry),
+    )
+    assert {first["status"], second["status"]} == {"sent", "ignored"}
+    assert sends == ["ev-race"]
+    assert row.status == "sent" and row.attempts == 1
 
 
 def _stored_hook(session: FakeSession) -> Webhook:

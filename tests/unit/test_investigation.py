@@ -138,10 +138,34 @@ def test_validator_rejects_unknown_control() -> None:
         "Priority changed to P4.",
         "Mark it as resolved already.",
         "Remediation is complete.",
+        "Severity: HIGH. Priority: P1. Status: RESOLVED for f-1.",
+        "Severity:HIGH",
+        "priority: p2",
+        "Verdict: fixed.",
+        "Status: closed",
     ],
 )
 def test_validator_rejects_forbidden_claims(text: str) -> None:
-    assert not validate_investigation_response(_answer(summary=text), _evidence()).accepted
+    evidence = _evidence(findings=(_finding(),), finding_ids=frozenset({"f-1"}))
+    result = validate_investigation_response(_answer(summary=text), evidence)
+    assert not result.accepted
+    assert any("compliance certification" in e or "canonical" in e for e in result.errors)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Severity rationale: the scanner assigned high based on CVSS.",
+        "The severity framework versions differ across engines.",
+        "We prioritized remediation by exploitability.",
+        "Mark the finding for follow-up review.",
+        "The status page shows scan progress.",
+    ],
+)
+def test_validator_accepts_adjacent_prose(text: str) -> None:
+    """Lawful narration near forbidden vocabulary must still validate."""
+    evidence = _evidence(findings=(_finding(),), finding_ids=frozenset({"f-1"}))
+    assert validate_investigation_response(_answer(summary=text), evidence).accepted
 
 
 def test_validator_bounds() -> None:

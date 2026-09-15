@@ -71,6 +71,31 @@ class WebhookRepository:
         """Fetch one delivery row by id (fanout/worker only)."""
         return await self._session.get(WebhookDelivery, delivery_id)
 
+    async def claim_delivery(self, delivery_id: uuid.UUID) -> WebhookDelivery | None:
+        """Atomically claim a pending delivery for this worker (or None).
+
+        The conditional UPDATE is the concurrency gate: exactly one
+        worker moves pending → sending, so concurrent duplicate task
+        executions cannot both reach the external POST. Callers must
+        settle the claim (sent/failed/pending) on every path.
+        """
+        result = await self._session.execute(
+            update(WebhookDelivery)
+            .where(WebhookDelivery.id == delivery_id, WebhookDelivery.status == "pending")
+            .values(status="sending")
+        )
+        if getattr(result, "rowcount", 0) != 1:
+            return None
+        return await self._session.get(WebhookDelivery, delivery_id)
+
+    async def release_claim(self, delivery_id: uuid.UUID, *, to_status: str = "pending") -> None:
+        """Return a claimed (sending) row to a queued status (retry/not-due)."""
+        await self._session.execute(
+            update(WebhookDelivery)
+            .where(WebhookDelivery.id == delivery_id, WebhookDelivery.status == "sending")
+            .values(status=to_status)
+        )
+
     async def list_deliveries(self, webhook_id: uuid.UUID, *, limit: int) -> list[WebhookDelivery]:
         """Deliveries for one webhook, newest first (bounded)."""
         stmt = (

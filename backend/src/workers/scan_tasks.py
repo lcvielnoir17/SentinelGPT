@@ -255,4 +255,36 @@ async def _mark_scan_rejected(scan_id: uuid.UUID, reason: str) -> None:
         await session.commit()
 
 
+@celery_app.task(  # type: ignore[untyped-decorator]
+    bind=True,
+    base=ScanJobTask,
+    name="src.workers.scan_tasks.reap_stale_running_scans_task",
+    acks_late=False,
+)
+def reap_stale_running_scans_task(
+    self: ScanJobTask,  # noqa: ARG001 - required by Celery bind=True
+) -> dict[str, object]:
+    """Beat-driven reaper for hard worker losses (SIGKILL/OOM/eviction).
+
+    Those paths run no Python handler, so without this the scan row
+    would strand in RUNNING and permanently consume quota. Runs every
+    few minutes; each execution only touches rows older than twice the
+    task time limit, and the conditional transition keeps it safe
+    against a still-running worker racing the reaper.
+    """
+    return asyncio.run(_reap_stale_running_scans())
+
+
+async def _reap_stale_running_scans() -> dict[str, object]:
+    """Own session, reap, commit (mirrors the scan-job seam)."""
+    from src.domain.scans.scan_service import ScanService
+
+    sessionmaker = get_async_sessionmaker()
+    async with sessionmaker() as session:
+        reaped = await ScanService(session, principal=None).reap_stale_running_scans()
+        await session.commit()
+        logger.info("stale_running_scans_reaped", reaped=reaped)
+        return {"reaped": reaped}
+
+
 __all__ = ["celery_app", "enqueue_scan", "execute_scan_job_task"]

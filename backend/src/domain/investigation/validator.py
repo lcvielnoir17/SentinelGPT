@@ -38,11 +38,16 @@ _FORBIDDEN_CERTIFICATION = (
 
 # Canonical restatements: severity/priority levels and resolution
 # verdicts belong to deterministic systems, never to narration.
+# Both verbose ("Severity is now low") and terse report-style
+# ("Severity: HIGH", "Status: RESOLVED") forms are rejected.
 _FORBIDDEN_RESTATEMENT = (
     re.compile(r"severity\s+(is|are|was|were|changed?\s+to|now)\b", re.IGNORECASE),
     re.compile(r"priority\s+(is|are|was|were|changed?\s+to|now)\b", re.IGNORECASE),
+    re.compile(r"\bseverity\s*:\s*\S+", re.IGNORECASE),
+    re.compile(r"\bpriority\s*:\s*\S+", re.IGNORECASE),
     re.compile(r"\bmark\w*\s+(it\s+)?as\s+(resolved|fixed|done|closed)\b", re.IGNORECASE),
-    re.compile(r"remediation\s+(is\s+)?(complete|completed|done|finished)\b", re.IGNORECASE),
+    re.compile(r"\b(status|verdict)\s*:\s*(resolved|fixed|done|closed)\b", re.IGNORECASE),
+    re.compile(r"\bremediation\s+(is\s+)?(complete|completed|done|finished)\b", re.IGNORECASE),
 )
 
 

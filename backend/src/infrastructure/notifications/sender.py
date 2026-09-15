@@ -59,7 +59,7 @@ def build_signed_request(
 
     body = dumps_stable(payload).encode("utf-8")
     moment = timestamp if timestamp is not None else _now_unix()
-    headers = dict(sign_payload(secret, body, timestamp=moment))
+    headers = dict(sign_payload(secret, body, timestamp=moment, event_id=event_id))
     headers[EVENT_ID_HEADER] = event_id
     headers[TIMESTAMP_HEADER] = str(moment)
     headers["Content-Type"] = "application/json"

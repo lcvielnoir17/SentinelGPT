@@ -43,12 +43,17 @@ def code_at(secret_base32: str, moment: datetime) -> str:
 
 def verify_code(secret_base32: str, code: str, now: datetime | None = None) -> bool:
     """Constant-time check across the skew window (malformed never matches)."""
+    return matching_step(secret_base32, code, now) is not None
+
+
+def matching_step(secret_base32: str, code: str, now: datetime | None = None) -> int | None:
+    """Matched time-step counter, or None (drives single-use consumption)."""
     if not isinstance(code, str) or len(code) != CODE_DIGITS or not code.isdigit():
-        return False
+        return None
     try:
         key = _decode_secret(secret_base32)
     except ValueError:
-        return False
+        return None
     moment = now if now is not None else datetime.now(UTC)
     base = int(moment.timestamp()) // TIME_STEP_SECONDS
     for step in range(-ALLOWED_SKEW_STEPS, ALLOWED_SKEW_STEPS + 1):
@@ -58,8 +63,8 @@ def verify_code(secret_base32: str, code: str, now: datetime | None = None) -> b
         truncated = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
         candidate = str(truncated % (10**CODE_DIGITS)).zfill(CODE_DIGITS)
         if hmac.compare_digest(candidate, code):
-            return True
-    return False
+            return base + step
+    return None
 
 
 def provisioning_uri(secret_base32: str, *, account: str, issuer: str = "SentinelGPT") -> str:
@@ -93,6 +98,7 @@ __all__ = [
     "code_at",
     "current_code",
     "generate_secret",
+    "matching_step",
     "provisioning_uri",
     "verify_code",
 ]
