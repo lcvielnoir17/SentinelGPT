@@ -136,3 +136,23 @@ def test_builder_deterministic_bytes(tmp_path: pathlib.Path) -> None:
     first = defense.build_package(results_dir)
     second = defense.build_package(results_dir)
     assert first == second
+
+
+def test_completed_review_preserved_on_rebuild(tmp_path: pathlib.Path) -> None:
+    """A completed human review is never overwritten by the template."""
+    results_dir = _make_inputs(tmp_path)
+    out_dir = tmp_path / "defense"
+    assert defense.main(["--results-dir", str(results_dir), "--out", str(out_dir)]) == 0
+    completed = (
+        out_dir / "human-review.md"
+    ).read_text() + "\n- Reviewer/date: Test Human / today\n"
+    (out_dir / "human-review.md").write_text(completed)
+    assert defense.main(["--results-dir", str(results_dir), "--out", str(out_dir)]) == 0
+    assert (out_dir / "human-review.md").read_text() == completed
+
+
+def test_fresh_dir_receives_pending_template(tmp_path: pathlib.Path) -> None:
+    results_dir = _make_inputs(tmp_path)
+    out_dir = tmp_path / "defense"
+    assert defense.main(["--results-dir", str(results_dir), "--out", str(out_dir)]) == 0
+    assert "PENDING HUMAN REVIEW" in (out_dir / "human-review.md").read_text()

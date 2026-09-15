@@ -568,13 +568,22 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "figures").mkdir(parents=True, exist_ok=True)
+    review_path = out_dir / "human-review.md"
+    written = 0
     try:
         for name in sorted(files):
+            if name == "human-review.md" and review_path.exists():
+                # Human judgments are append-only human data: never
+                # overwrite a completed review with the PENDING template.
+                # The template is written on first creation only.
+                print("keeping existing human-review.md (human judgments preserved)")
+                continue
             _write(out_dir, name, files[name])
+            written += 1
     except PackageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    print(f"wrote {len(files)} defense files to {out_dir}")
+    print(f"wrote {written} defense files to {out_dir}")
     return 0
 
 
