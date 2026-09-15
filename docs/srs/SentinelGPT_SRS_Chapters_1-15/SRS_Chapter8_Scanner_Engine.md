@@ -219,7 +219,7 @@ The research compares at minimum:
 2. Deterministic contextual baseline.
 3. SentinelGPT-assisted prioritization.
 
-Every priority decision stores its component inputs, policy/rule version, missing-data indicators, and rationale. AI may explain or propose a priority but cannot overwrite the deterministic canonical severity. Expert agreement is the primary external reference for evaluating prioritization quality.
+Every priority decision stores its component inputs, policy/rule version, missing-data indicators, and rationale. AI may explain or propose a priority but cannot overwrite the deterministic canonical severity. Independent expert agreement was intended as an external reference for evaluating prioritization quality, but no independent expert panel was convened in M13–M22; prioritization agreement in this study was measured against rule-pinned ground truth (see Chapter 1 §4.4 evaluation status).
 
 ## 11. Correlation Engine (Security Assessment Graph)
 

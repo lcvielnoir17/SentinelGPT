@@ -440,7 +440,7 @@ This separation prevents a scanner alert, semantic similarity, or LLM output fro
 
 ### 8.2 Research baseline and ground-truth boundary
 
-The architecture supports three evaluation conditions: **single-tool output**, **multi-tool rule-based aggregation**, and **SentinelGPT-assisted analysis**. Experimental evaluation must use controlled or seeded test cases with known expected findings and relationships so that correlation precision/recall, incorrect merges, missed duplicates, prioritization agreement, grounding errors, and analyst time can be measured independently of the model's own claims.
+The architecture supports three evaluation conditions: **single-tool output**, **multi-tool rule-based aggregation**, and **SentinelGPT-assisted analysis**. Experimental evaluation must use controlled or seeded test cases with known expected findings and relationships so that correlation precision/recall, incorrect merges, missed duplicates, prioritization agreement, grounding errors, and analyst time (not measured in M13–M22; future work) can be measured independently of the model's own claims.
 
 ---
 

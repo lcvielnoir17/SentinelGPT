@@ -178,7 +178,7 @@ A phase is not "done" on feature completion alone. Every phase above must additi
 | 0 — Foundations | Running skeleton, CI/CD scaffolding | Architectural assumptions validated early |
 | 1 — Identity & Authorization | Attestation-gated target registration | Unauthorized-scanning risk (R-01) addressed before scanning exists |
 | 2 — Scanner Engine | Full multi-engine scanning with lifecycle tracking | Sandbox/SSRF risk (R-03, R-04) and tool-integration risk retired |
-| 3 — AI Analysis | Grounded, validated, traceable AI explanations | Hallucination risk (R-02) retired via proven validator + fallback |
+| 3 — AI Analysis | Grounded, validated, traceable AI explanations | Hallucination risk (R-02) mitigated through the validator and deterministic fallback mechanisms |
 | 4 — Reporting & Dashboard | Shareable reports, trend dashboard | Core user value (US-09–US-15) delivered end-to-end |
 | 5 — Hardening & Launch | Production-grade deployment, pen-tested | Launch-readiness and legal/compliance risk (R-05, R-06) addressed |
 
