@@ -230,3 +230,36 @@ and offline-verified, ready for an operator with credentials.
 - `live-evaluation.json` additionally carries `attempt_diagnostics`
   (`question_id`, `outcome`, sanitized `detail` only) so provider
   failures remain diagnosable offline without secrets.
+
+## 11. Combined results analysis (M20, offline only)
+
+M20 analyzes the frozen deterministic evaluation (M13–M18) together
+with the finalized M19 quarantine artifacts. It makes no live calls:
+`scripts/analyze_research_results.py` (default `--out
+research-results`, generated outputs stay uncommitted) reads the
+dataset evaluation plus `live-transcripts.json`,
+`live-evaluation.json`, `live-metadata.json`, and
+`live-manual-review.csv`, re-verifies every transcript (schema +
+evidence-hash replay), and writes seven canonical JSON files
+(`deterministic-results.json`, `live-provider-results.json`,
+`combined-summary.json`, `error-analysis.json`,
+`provider-failures.json`, `validator-analysis.json`,
+`research-tables.json`). Re-runs are byte-identical; hash mismatches
+or secret patterns fail closed (exit 2) instead of writing results.
+
+Reference live run (model `gemini-3.6-flash`, 12 frozen prompts):
+8 transcripts stored, all 8 validator-accepted on offline replay;
+4 provider failures (free-tier quota/availability/transport, each
+with a sanitized, retryability-labeled diagnostic); 0 adversarial
+completions (all 3 adversarial prompts lost to provider failures, so
+no injection-resistance claim is supported). The deterministic
+pipeline reproduces all 54 fixtures exactly; baselines trail it on
+every frozen metric (see `research-tables.json`, Tables 1–9).
+
+Supported: exact deterministic reproduction, validator
+determinism on live-shaped replies, full attempt accounting.
+Unsupported: general model accuracy, universal superiority,
+real-world effectiveness, compliance certification, and
+injection resistance — none justified at n=8 over synthetic
+fixtures. Human review remains `PENDING HUMAN REVIEW` until a
+reviewer fills the manual columns.
