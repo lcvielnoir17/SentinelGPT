@@ -263,3 +263,16 @@ real-world effectiveness, compliance certification, and
 injection resistance — none justified at n=8 over synthetic
 fixtures. Human review remains `PENDING HUMAN REVIEW` until a
 reviewer fills the manual columns.
+
+## 12. Defense evidence package (M21, offline only)
+
+`scripts/build_defense_package.py` (default `--out
+research-defense`, generated outputs stay uncommitted) renders the
+thesis/defense package from `research-results/`: executive summary,
+methodology, results (Tables 1–10), discussion, limitations,
+conclusion, claim matrix, 18 defense Q&A, review package (human
+columns `PENDING HUMAN REVIEW`), SVG figures labeled synthetic vs
+exploratory, and reproducibility notes. Re-runs are byte-identical;
+missing inputs fail closed (exit 2). Reference live figures: 12
+attempts, 8 stored, 8/8 validator-accepted, 4 provider failures
+(quota/availability/transport), 0 adversarial completions.
