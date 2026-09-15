@@ -77,7 +77,7 @@ Version-controlled files under `ai/prompt_builders/` (Chapter 3, Section 14), on
 
 **Stated invariant, not merely an emergent property:** Gemini explains and rationalizes severity — it never sets it. `severity_level_id` on both `finding` (Chapter 4, Section 6.1) and `risk_cluster` (Chapter 4, Section 15.4) is written exclusively by deterministic scan-engine or correlation-rule logic, before any AI call happens. This holds structurally too — `ai_explanation` (Chapter 4, Section 7.1) has no severity column to write to — but the rule is stated here explicitly so a future change to that table doesn't accidentally introduce a path around it. `severityRationale` in the schema below explains a severity the AI was given, never assigns one.
 
-Gemini is invoked with schema-constrained/structured output mode (Chapter 3, Section 4) using a fixed response contract:
+Gemini is invoked with schema-constrained/structured output mode (Chapter 3, Section 4) using a fixed response contract for the production evidence analyzer. The M19 live research collector instead used the multi-turn conversation agent with free-form responses; collector-side fence normalization handled formatting before the unchanged validator. The live experiment therefore did not use structured JSON mode:
 
 ```json
 {
@@ -125,7 +125,7 @@ Only responses passing **all applicable stages** are persisted with `validation_
 
 ## 6. Fallback Template System
 
-- Fallback explanations are **pre-written, human-reviewed, deterministic templates** keyed by `finding_category.code` (Chapter 4, Section 3.2) — e.g., a generic but accurate explanation of what a missing HSTS header means and a standard remediation snippet, stored as static content in `ai/fallbackTemplates/`, not generated at request time by any model.
+- Fallback explanations are **pre-written, human-reviewed, deterministic templates** keyed by `finding_category.code` (Chapter 4, Section 3.2) — e.g., a generic but accurate explanation of what a missing HSTS header means and a standard remediation snippet, stored as static content in `ai/fallbackTemplates/`, not generated at request time by any model. ("Human-reviewed" here means template-authorship review by a security-knowledgeable team member; it is distinct from live-transcript human review of model outputs in research evaluation.)
 - Fallback content is intentionally **less specific** than a successful AI explanation (no tech-stack tailoring) but is never wrong — each template is written and reviewed by a security-knowledgeable team member, checked into version control, and covered by the same PR-review bar as application code (Chapter 3, Section 16).
 - A finding using a fallback explanation is a candidate for the `POST /findings/{findingId}/explanation/regenerate` endpoint (Chapter 5, Section 9) once the underlying issue (Gemini outage, transient validation failure) has passed.
 
@@ -140,7 +140,7 @@ Recapping and operationalizing Chapter 3, Section 4's tiering convention:
 | Per-finding explanation + remediation | `gemini-2.5-flash-lite` (free-tier eligible) | High volume (one call per finding, potentially dozens per full-assessment scan); task complexity is bounded and well-specified by the schema |
 | Executive summary synthesis | `gemini-2.5-flash` (free-tier eligible) | Low volume (one call per scan); requires cross-finding prioritization and narrative coherence that benefits from a slightly stronger model, without stepping up to a paid-only Pro tier |
 
-Both model names are config values (Chapter 6, Section 5), not hardcoded — swapping either tier to a different Gemini model later, free or paid, is a one-line change with no redesign. Neither tier depends on Pro-class capability; this is a deliberate MVP constraint, not an oversight.
+Both model names are config values (Chapter 6, Section 5), not hardcoded — swapping either tier to a different Gemini model later, free or paid, is a one-line change with no redesign. Neither tier depends on Pro-class capability; this is a deliberate MVP constraint, not an oversight. Product tiers remained unchanged during live research: the research model was selected independently per live evaluation run (recorded in live metadata, e.g. `gemini-3.6-flash`) and never read production model settings.
 
 - **Bounded concurrency, tuned to the free tier specifically:** per-finding calls for a single scan are dispatched with a concurrency ceiling low enough to stay comfortably under free-tier per-minute rate limits (Chapter 3, Section 4) — not an abstract "some concurrency limit," but one sized against the actual quota this MVP runs on.
 - **Retry and backoff:** every call retries on `429` (rate-limited) with exponential backoff up to a bounded max-attempt count; a call that still fails after retries degrades to the deterministic fallback path (Section 6) rather than failing the scan.

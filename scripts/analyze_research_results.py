@@ -356,6 +356,8 @@ def build_package(dataset: dict[str, Any], live_dir: Path) -> dict[str, object]:
         "Exact-match and allow-list metrics reflect construction choices, not prevalence.",
         "No live targets, no prevalence estimate, possible construction bias.",
         "Adversarial coverage did not complete (0 of 3 adversarial prompts stored).",
+        "No independent expert-judgment or analyst-timing study was conducted; "
+        "these planned measures remain outstanding.",
     ]
     supported_claims = [
         "The deterministic SentinelGPT pipeline reproduces every canonical fixture exactly (54/54 grouping F1 1.0, zero false positives/negatives).",

@@ -95,6 +95,17 @@ def test_builder_produces_seven_canonical_files(tmp_path: pathlib.Path) -> None:
         assert json.loads(text) == payload, name
 
 
+def test_limitations_name_outstanding_measures(tmp_path: pathlib.Path) -> None:
+    live_dir = _make_live_dir(tmp_path)
+    package = analyzer.build_package(_dataset(), live_dir)
+    limitations = package["combined-summary.json"]["limitations"]
+    assert (
+        "No independent expert-judgment or analyst-timing study was conducted; "
+        "these planned measures remain outstanding." in limitations
+    )
+    assert package["combined-summary.json"]["threats_to_validity"] == limitations
+
+
 def test_builder_rejects_hash_mismatch(tmp_path: pathlib.Path) -> None:
     import pytest
 

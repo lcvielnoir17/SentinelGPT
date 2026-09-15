@@ -106,7 +106,9 @@ Three principles drive the ordering below, all traceable to earlier chapters:
 - Measure duplicate reduction, precision/recall/F1 of correlation, incorrect merges, missed duplicates, prioritization agreement with expert judgments, evidence-grounding errors, and analyst triage time.
 - Record scanner versions, correlation-rule versions, prompt/model identifiers, and test configuration so results are reproducible.
 
-**Exit criterion:** the project has a reproducible evaluation dataset and baseline results before final claims about SentinelGPT's effectiveness are written.
+**Status (M13–M22):** reproducible dataset, baselines, and the deterministic effectiveness evaluation were completed (M13–M18); live-provider collection, validation, and accounting were completed (M19) with combined analysis (M20) and a defense package (M21). Independent expert-agreement and analyst-timing measures were not conducted; those measures remain future work.
+
+**Exit criterion:** the project has a reproducible evaluation dataset and baseline results before final claims about SentinelGPT's effectiveness are written. Final effectiveness claims must additionally scope out the unmeasured expert-agreement and analyst-timing items above.
 
 ## 6. Phase 4: Reporting & Dashboard
 

@@ -433,7 +433,7 @@ The system distinguishes **raw evidence**, **observations**, and **findings**:
 1. **Raw evidence** is the original scanner output and artifacts retained for provenance.
 2. **Observation** is a normalized statement of what a tool actually observed (for example, an open port, an HTTP 200 response for `/admin`, or a Nuclei template match). An observation is not automatically a verified vulnerability.
 3. **Candidate finding** is a normalized security issue assembled from one or more observations.
-4. **Correlated finding/relationship** is produced only after candidate findings are compared using deterministic rules and, where appropriate, constrained AI classification.
+4. **Correlated finding/relationship** is produced only after candidate findings are compared using deterministic rules; an AI-classification extension point is reserved but was not implemented or evaluated.
 5. **Verified finding** records whether automated checks confirmed the interpretation (human verification is used only during research evaluation and is never a required operational step).
 
 This separation prevents a scanner alert, semantic similarity, or LLM output from being treated as proof by default. Every transition remains traceable to its source evidence.
